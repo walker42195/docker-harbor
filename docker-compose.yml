@@ -1,0 +1,14 @@
+services:
+  docker-harbor:
+    build: .
+    container_name: docker-harbor
+    restart: always
+    ports:
+      - "6969:6969"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    environment:
+      - PORT=6969
+      - JWT_SECRET=docker-harbor-super-secret-jwt-key-2026-novabase
+      - ADMIN_USER=admin
+      - ADMIN_PASSWORD=admin
