@@ -15,7 +15,7 @@ Ett modernt, snabbt och stilrent webbgränssnitt för att hantera och övervaka 
 - 📜 **Live Loggar (WebSocket)**: Realtidsströmning av container-loggar direkt i webbläsaren.
 - 🔍 **Inspektera**: Se fullständig JSON-konfiguration (miljövariabler, nätverk, mount-sökvägar).
 - 🧹 **System Prune**: Enklicksrensning av oanvända containers och images.
-- 🌐 **Domän & Port**: Förkonfigurerad för port `6969` och publicering via Cloudflare Tunnel (`docker.novabase.se`).
+- 🌐 **Port**: Förkonfigurerad för port `6969`, kan publiceras via t.ex. Cloudflare Tunnel eller reverse proxy.
 
 ## Bygg & Kör med Docker Compose
 
@@ -23,7 +23,7 @@ Ett modernt, snabbt och stilrent webbgränssnitt för att hantera och övervaka 
 docker compose up -d --build
 ```
 
-Webbsidan nås på `http://localhost:6969` eller via Cloudflare tunnel `https://docker.novabase.se`.
+Webbsidan nås på `http://localhost:6969` (eller din publicerade domän, om du satt upp en).
 
 Standardinloggning:
 - **Användarnamn**: `admin`

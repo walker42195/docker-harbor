@@ -407,6 +407,6 @@ app.get('*', (req, res) => {
 server.listen(PORT, '0.0.0.0', () => {
   console.log(`====================================================`);
   console.log(` Docker Harbor Server is running on port ${PORT}`);
-  console.log(` URL: http://0.0.0.0:${PORT} / docker.novabase.se`);
+  console.log(` URL: http://0.0.0.0:${PORT}`);
   console.log(`====================================================`);
 });
