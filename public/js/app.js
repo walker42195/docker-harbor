@@ -234,7 +234,19 @@ function renderContainers() {
 
   emptyState.style.display = 'none';
 
-  containerList.innerHTML = filtered.map(c => {
+  // Deduplicate ports: Docker lists a separate binding per IP family
+  // (0.0.0.0 and ::) for the same host port, which would otherwise render twice.
+  function dedupePorts(ports) {
+    const seen = new Set();
+    return ports.filter(p => {
+      const key = `${p.PublicPort}:${p.PrivatePort}/${p.Type}`;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+  }
+
+  function cardInnerHtml(c) {
     const isRunning = c.state === 'running';
     const isPaused = c.state === 'paused';
 
@@ -243,7 +255,7 @@ function renderContainers() {
     const stateText = isRunning ? 'Körs' : (isPaused ? 'Pausad' : 'Stoppad');
 
     // Format ports
-    const portsHtml = c.ports.map(p => {
+    const portsHtml = dedupePorts(c.ports).map(p => {
       if (p.PublicPort) {
         const host = window.location.hostname;
         return `<a href="http://${host}:${p.PublicPort}" target="_blank" class="badge port-badge">🔗 ${p.PublicPort}:${p.PrivatePort}</a>`;
@@ -252,7 +264,6 @@ function renderContainers() {
     }).join(' ');
 
     return `
-      <div class="container-card glass-panel fade-in">
         <div>
           <div class="card-header-top">
             <div class="container-name-box">
@@ -312,9 +323,31 @@ function renderContainers() {
             Ta Bort
           </button>
         </div>
-      </div>
     `;
-  }).join('');
+  }
+
+  // Reconcile: reuse existing card DOM nodes for unchanged containers so they
+  // don't get destroyed/recreated (and re-trigger the fade-in animation) on
+  // every poll — only their inner content is refreshed in place.
+  const existingCards = new Map();
+  containerList.querySelectorAll('.container-card').forEach(el => existingCards.set(el.dataset.id, el));
+
+  const usedIds = new Set();
+  filtered.forEach(c => {
+    usedIds.add(c.id);
+    let el = existingCards.get(c.id);
+    if (!el) {
+      el = document.createElement('div');
+      el.className = 'container-card glass-panel fade-in';
+      el.dataset.id = c.id;
+    }
+    el.innerHTML = cardInnerHtml(c);
+    containerList.appendChild(el);
+  });
+
+  existingCards.forEach((el, id) => {
+    if (!usedIds.has(id)) el.remove();
+  });
 }
 
 // Container Operations
