@@ -7,6 +7,7 @@ let currentToken = localStorage.getItem('docker_harbor_jwt') || '';
 let autoRefreshTimer = null;
 let activeWs = null;
 let pendingDeleteId = null;
+let lastContainersSignature = null;
 
 // DOM Elements
 const loginSection = document.getElementById('loginSection');
@@ -177,8 +178,13 @@ async function fetchDashboardData(manual = false) {
     }
 
     if (containersRes && containersRes.success) {
-      containersData = containersRes.containers || [];
-      renderContainers();
+      const newContainers = containersRes.containers || [];
+      const signature = JSON.stringify(newContainers);
+      if (signature !== lastContainersSignature) {
+        lastContainersSignature = signature;
+        containersData = newContainers;
+        renderContainers();
+      }
     }
   } catch (err) {
     console.error('Fetch dashboard error:', err);
