@@ -7,6 +7,7 @@ services:
       - "6969:6969"
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
+      - ./descriptions.json:/app/descriptions.json
     env_file:
       - .env
     labels:
