@@ -31,6 +31,29 @@ app.use(cookieParser());
 // Static Files
 app.use(express.static(path.join(__dirname, 'public')));
 
+const fs = require('fs');
+const DESCRIPTIONS_FILE = path.join(__dirname, 'descriptions.json');
+
+function loadCustomDescriptions() {
+  try {
+    if (fs.existsSync(DESCRIPTIONS_FILE)) {
+      const raw = fs.readFileSync(DESCRIPTIONS_FILE, 'utf8');
+      return JSON.parse(raw);
+    }
+  } catch (err) {
+    console.error('Error reading descriptions.json:', err.message);
+  }
+  return {};
+}
+
+function saveCustomDescriptions(descriptions) {
+  try {
+    fs.writeFileSync(DESCRIPTIONS_FILE, JSON.stringify(descriptions, null, 2), 'utf8');
+  } catch (err) {
+    console.error('Error writing descriptions.json:', err.message);
+  }
+}
+
 // Authentication Middleware
 const requireAuth = (req, res, next) => {
   const token = req.cookies.docker_harbor_token || (req.headers.authorization && req.headers.authorization.split(' ')[1]);
@@ -121,6 +144,7 @@ app.get('/api/system/info', requireAuth, async (req, res) => {
 app.get('/api/containers', requireAuth, async (req, res) => {
   try {
     const containers = await docker.listContainers({ all: true });
+    const customDescriptions = loadCustomDescriptions();
 
     // Fetch inspect details in parallel for restart policies
     const inspects = await Promise.all(
@@ -135,13 +159,19 @@ app.get('/api/containers', requireAuth, async (req, res) => {
       const workingDir = (c.Labels && c.Labels['com.docker.compose.project.working_dir']) || null;
       const composeProject = (c.Labels && c.Labels['com.docker.compose.project']) || null;
       const composeService = (c.Labels && c.Labels['com.docker.compose.service']) || null;
-      const description = (c.Labels && (
+
+      const containerName = c.Names && c.Names[0] ? c.Names[0].replace(/^\//, '') : '';
+      const customDesc = customDescriptions[containerName] || customDescriptions[c.Id] || customDescriptions[c.Id.substring(0, 12)];
+
+      const composeLabelDesc = (c.Labels && (
         c.Labels['description'] ||
         c.Labels['harbor.description'] ||
         c.Labels['com.docker.harbor.description'] ||
         c.Labels['org.opencontainers.image.description'] ||
         c.Labels['info']
       )) || null;
+
+      const description = (customDesc !== undefined && customDesc !== null) ? customDesc : composeLabelDesc;
 
       return {
         id: c.Id,
@@ -174,6 +204,39 @@ app.get('/api/containers', requireAuth, async (req, res) => {
   } catch (err) {
     console.error('List containers error:', err);
     res.status(500).json({ success: false, error: 'Kunde inte lista containers: ' + err.message });
+  }
+});
+
+// Update Container Description
+app.post('/api/containers/:id/description', requireAuth, async (req, res) => {
+  const { description } = req.body;
+  const containerId = req.params.id;
+
+  try {
+    const container = docker.getContainer(containerId);
+    const inspectData = await container.inspect().catch(() => null);
+    const containerName = inspectData && inspectData.Name ? inspectData.Name.replace(/^\//, '') : containerId;
+
+    const descriptions = loadCustomDescriptions();
+    const cleanDesc = (description || '').trim();
+
+    if (cleanDesc) {
+      descriptions[containerName] = cleanDesc;
+    } else {
+      delete descriptions[containerName];
+      delete descriptions[containerId];
+    }
+
+    saveCustomDescriptions(descriptions);
+
+    res.json({
+      success: true,
+      message: 'Infotexten sparades framgångsrikt.',
+      description: descriptions[containerName] || null
+    });
+  } catch (err) {
+    console.error('Update description error:', err);
+    res.status(500).json({ success: false, error: 'Kunde inte spara infotext: ' + err.message });
   }
 });
 
