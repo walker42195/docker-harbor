@@ -1,3 +1,4 @@
 {
-  "haddock-telegram_bot-1": "Clawollama kopplat till en Telegramgrupp med inställningen att llm ska svara som Kapten Haddock"
+  "haddock-telegram_bot-1": "Clawollama kopplat till en Telegramgrupp med inställningen att llm ska svara som Kapten Haddock",
+  "docker-harbor": "Huvudsaklig kontrollpanel för Docker-containers på servern (Live redigerad)."
 }

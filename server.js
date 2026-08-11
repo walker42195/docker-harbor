@@ -32,6 +32,7 @@ app.use(cookieParser());
 app.use(express.static(path.join(__dirname, 'public')));
 
 const fs = require('fs');
+const YAML = require('yaml');
 const DESCRIPTIONS_FILE = path.join(__dirname, 'descriptions.json');
 
 function loadCustomDescriptions() {
@@ -51,6 +52,68 @@ function saveCustomDescriptions(descriptions) {
     fs.writeFileSync(DESCRIPTIONS_FILE, JSON.stringify(descriptions, null, 2), 'utf8');
   } catch (err) {
     console.error('Error writing descriptions.json:', err.message);
+  }
+}
+
+function updateComposeFileDescription(filePath, serviceName, newDesc) {
+  try {
+    if (!filePath || !fs.existsSync(filePath)) return false;
+
+    const yamlText = fs.readFileSync(filePath, 'utf8');
+    const doc = YAML.parseDocument(yamlText);
+    const services = doc.get('services');
+    if (!services) return false;
+
+    // Try target serviceName, or fallback to first service in compose file if only 1 service
+    let service = doc.getIn(['services', serviceName]);
+    if (!service && services.items && services.items.length > 0) {
+      // Find service where container_name matches or default to first
+      for (const item of services.items) {
+        if (item.value && item.value.get && item.value.get('container_name') === serviceName) {
+          service = item.value;
+          break;
+        }
+      }
+      if (!service) service = services.items[0].value;
+    }
+
+    if (!service) return false;
+
+    let labels = service.get('labels');
+    if (!labels) {
+      if (newDesc) {
+        service.set('labels', { description: newDesc });
+      }
+    } else if (YAML.isSeq(labels)) {
+      let found = false;
+      for (let i = 0; i < labels.items.length; i++) {
+        const item = String(labels.items[i]);
+        if (item.startsWith('description=') || item.startsWith('harbor.description=')) {
+          if (newDesc) {
+            labels.items[i] = new YAML.Scalar(`description=${newDesc}`);
+          } else {
+            labels.items.splice(i, 1);
+          }
+          found = true;
+          break;
+        }
+      }
+      if (!found && newDesc) {
+        labels.items.push(new YAML.Scalar(`description=${newDesc}`));
+      }
+    } else {
+      if (newDesc) {
+        service.setIn(['labels', 'description'], newDesc);
+      } else {
+        service.deleteIn(['labels', 'description']);
+      }
+    }
+
+    fs.writeFileSync(filePath, doc.toString(), 'utf8');
+    return true;
+  } catch (err) {
+    console.error(`Error updating compose file ${filePath}:`, err.message);
+    return false;
   }
 }
 
@@ -229,10 +292,23 @@ app.post('/api/containers/:id/description', requireAuth, async (req, res) => {
 
     saveCustomDescriptions(descriptions);
 
+    // Update docker-compose.yml on host disk if container was started from a compose file
+    const labels = (inspectData && inspectData.Config && inspectData.Config.Labels) || {};
+    const configFile = labels['com.docker.compose.project.config_files'];
+    const composeService = labels['com.docker.compose.service'] || containerName;
+
+    let composeUpdated = false;
+    if (configFile) {
+      composeUpdated = updateComposeFileDescription(configFile, composeService, cleanDesc);
+    }
+
     res.json({
       success: true,
-      message: 'Infotexten sparades framgångsrikt.',
-      description: descriptions[containerName] || null
+      message: composeUpdated 
+        ? 'Infotexten sparades i både docker-compose.yml och systemet.'
+        : 'Infotexten sparades i systemet.',
+      description: descriptions[containerName] || null,
+      composeUpdated
     });
   } catch (err) {
     console.error('Update description error:', err);

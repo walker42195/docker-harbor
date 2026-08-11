@@ -8,7 +8,9 @@ services:
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - ./descriptions.json:/app/descriptions.json
+      - /home/fredrik/Projects:/home/fredrik/Projects
     env_file:
       - .env
     labels:
-      description: "Huvudsaklig kontrollpanel för Docker-containers på servern."
+      description: "Huvudsaklig kontrollpanel för Docker-containers på servern (Live
+        redigerad)."
