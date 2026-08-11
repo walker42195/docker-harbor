@@ -660,6 +660,8 @@ body {
 .action-btn.restart:hover:not(:disabled) { background: var(--primary); color: #fff; border-color: var(--primary); }
 .action-btn.rebuild:hover:not(:disabled) { background: var(--accent-purple); color: #fff; border-color: var(--accent-purple); }
 .action-btn.logs:hover:not(:disabled) { background: var(--accent-cyan); color: #fff; border-color: var(--accent-cyan); }
+.action-btn.file-compose:hover:not(:disabled) { background: #3b82f6; color: #fff; border-color: #3b82f6; }
+.action-btn.file-dockerfile:hover:not(:disabled) { background: #10b981; color: #fff; border-color: #10b981; }
 .action-btn.delete:hover:not(:disabled) { background: #b91c1c; color: #fff; border-color: #b91c1c; }
 
 /* Empty State */

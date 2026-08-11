@@ -236,6 +236,23 @@ app.get('/api/containers', requireAuth, async (req, res) => {
 
       const description = (customDesc !== undefined && customDesc !== null) ? customDesc : composeLabelDesc;
 
+      let dockerfileFile = null;
+      if (workingDir) {
+        const potentialDockerfile = path.join(workingDir, 'Dockerfile');
+        if (fs.existsSync(potentialDockerfile)) {
+          dockerfileFile = potentialDockerfile;
+        }
+      } else if (configFile) {
+        const dir = path.dirname(configFile);
+        const potentialDockerfile = path.join(dir, 'Dockerfile');
+        if (fs.existsSync(potentialDockerfile)) {
+          dockerfileFile = potentialDockerfile;
+        }
+      }
+
+      const hasCompose = !!(configFile && fs.existsSync(configFile));
+      const hasDockerfile = !!dockerfileFile;
+
       return {
         id: c.Id,
         shortId: c.Id.substring(0, 12),
@@ -259,7 +276,9 @@ app.get('/api/containers', requireAuth, async (req, res) => {
         workingDir,
         composeProject,
         composeService,
-        description
+        description,
+        hasCompose,
+        hasDockerfile
       };
     });
 
@@ -267,6 +286,66 @@ app.get('/api/containers', requireAuth, async (req, res) => {
   } catch (err) {
     console.error('List containers error:', err);
     res.status(500).json({ success: false, error: 'Kunde inte lista containers: ' + err.message });
+  }
+});
+
+// Read Container Configuration File (docker-compose.yml or Dockerfile)
+app.get('/api/containers/:id/file', requireAuth, async (req, res) => {
+  const fileType = req.query.type; // 'compose' or 'dockerfile'
+  const containerId = req.params.id;
+
+  try {
+    const container = docker.getContainer(containerId);
+    const inspectData = await container.inspect().catch(() => null);
+    if (!inspectData) {
+      return res.status(404).json({ success: false, error: 'Container hittades inte.' });
+    }
+
+    const labels = inspectData.Config.Labels || {};
+    const configFile = labels['com.docker.compose.project.config_files'] || null;
+    const workingDir = labels['com.docker.compose.project.working_dir'] || (inspectData.Config.WorkingDir || null);
+
+    let targetPath = null;
+
+    if (fileType === 'compose') {
+      if (configFile && fs.existsSync(configFile)) {
+        targetPath = configFile;
+      } else if (workingDir) {
+        const altCompose = path.join(workingDir, 'docker-compose.yml');
+        const altComposeYaml = path.join(workingDir, 'docker-compose.yaml');
+        if (fs.existsSync(altCompose)) targetPath = altCompose;
+        else if (fs.existsSync(altComposeYaml)) targetPath = altComposeYaml;
+      }
+    } else if (fileType === 'dockerfile') {
+      if (workingDir) {
+        const df = path.join(workingDir, 'Dockerfile');
+        if (fs.existsSync(df)) targetPath = df;
+      }
+      if (!targetPath && configFile) {
+        const dir = path.dirname(configFile);
+        const df = path.join(dir, 'Dockerfile');
+        if (fs.existsSync(df)) targetPath = df;
+      }
+    }
+
+    if (!targetPath || !fs.existsSync(targetPath)) {
+      return res.status(404).json({
+        success: false,
+        error: `Ingen ${fileType === 'compose' ? 'docker-compose.yml' : 'Dockerfile'} hittades för denna container.`
+      });
+    }
+
+    const content = fs.readFileSync(targetPath, 'utf8');
+    res.json({
+      success: true,
+      fileType,
+      fileName: path.basename(targetPath),
+      filePath: targetPath,
+      content
+    });
+  } catch (err) {
+    console.error('Read container file error:', err);
+    res.status(500).json({ success: false, error: 'Kunde inte läsa filen: ' + err.message });
   }
 });
 

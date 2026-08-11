@@ -375,6 +375,16 @@ function renderContainers() {
             Loggar
           </button>
 
+          <button class="action-btn file-compose" ${!c.hasCompose ? 'disabled' : ''} onclick="openCodeFileModal('${c.id}', 'compose')" title="Öppna docker-compose.yml">
+            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg>
+            Compose
+          </button>
+
+          <button class="action-btn file-dockerfile" ${!c.hasDockerfile ? 'disabled' : ''} onclick="openCodeFileModal('${c.id}', 'dockerfile')" title="Öppna Dockerfile">
+            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 21h10a2 2 0 002-2V9.414a1 1 0 00-.293-.707l-5.414-5.414A1 1 0 0012.586 3H7a2 2 0 00-2 2v14a2 2 0 002 2z" /></svg>
+            Dockerfile
+          </button>
+
           <button class="action-btn logs" onclick="inspectContainer('${c.id}')" title="Inspektera Container Configuration">
             <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
             Info
@@ -678,6 +688,50 @@ async function handleSaveDescription(e) {
   } finally {
     saveBtn.disabled = false;
   }
+}
+
+// Code / File Viewer Modal Handlers
+let currentCodeFileText = '';
+
+async function openCodeFileModal(id, type) {
+  const name = getContainerName(id);
+  const titleText = type === 'compose' ? `docker-compose.yml för ${name}` : `Dockerfile för ${name}`;
+
+  document.getElementById('codeFileTitle').textContent = titleText;
+  document.getElementById('codeFilePath').textContent = 'Hämtar fil...';
+  document.getElementById('codeFileContent').textContent = 'Läser filinnehåll...';
+  document.getElementById('codeFileModal').classList.add('active');
+
+  try {
+    const res = await apiFetch(`/api/containers/${id}/file?type=${type}`);
+    if (res && res.success) {
+      currentCodeFileText = res.content || '';
+      document.getElementById('codeFilePath').textContent = res.filePath || res.fileName;
+      document.getElementById('codeFileContent').textContent = currentCodeFileText;
+    } else {
+      currentCodeFileText = '';
+      document.getElementById('codeFilePath').textContent = 'Ej hittad';
+      document.getElementById('codeFileContent').textContent = (res && res.error) || 'Kunde inte läsa filen.';
+    }
+  } catch (err) {
+    currentCodeFileText = '';
+    document.getElementById('codeFilePath').textContent = 'Fel vid hämtning';
+    document.getElementById('codeFileContent').textContent = 'Fel: ' + err.message;
+  }
+}
+
+function closeCodeFileModal() {
+  document.getElementById('codeFileModal').classList.remove('active');
+  currentCodeFileText = '';
+}
+
+function copyCodeFileContent() {
+  if (!currentCodeFileText) return;
+  navigator.clipboard.writeText(currentCodeFileText).then(() => {
+    showToast('Kopierade filinnehållet till urklipp!', 'info');
+  }).catch(() => {
+    showToast('Kunde inte kopiera.', 'error');
+  });
 }
 
 // Helper: Escape HTML
