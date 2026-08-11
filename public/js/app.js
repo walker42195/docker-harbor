@@ -185,6 +185,9 @@ async function fetchDashboardData(manual = false) {
 
     if (containersRes && containersRes.success) {
       containersData = containersRes.containers || [];
+      if (containersRes.hostMetrics) {
+        updateHostMetricsUI(containersRes.hostMetrics);
+      }
       renderContainers();
     }
   } catch (err) {
@@ -194,19 +197,34 @@ async function fetchDashboardData(manual = false) {
   }
 }
 
+function updateHostMetricsUI(metrics) {
+  if (!metrics) return;
+  if (document.getElementById('statHostCpu')) {
+    document.getElementById('statHostCpu').textContent = metrics.cpuPercent || '--';
+  }
+  if (document.getElementById('statHostGpu')) {
+    document.getElementById('statHostGpu').textContent = metrics.gpuPercent || '--';
+  }
+  if (document.getElementById('statHostRam')) {
+    document.getElementById('statHostRam').textContent = metrics.ram || '--';
+  }
+  if (document.getElementById('statHostVram')) {
+    document.getElementById('statHostVram').textContent = metrics.vram || '--';
+  }
+}
+
 // Update Top Info & Stat Cards
 function updateSystemInfoUI(data) {
   document.getElementById('dockerVersion').textContent = `v${data.serverVersion} (${data.os})`;
   document.getElementById('hostSystemInfo').textContent = `${data.ncpu} CPUs | ${(data.memTotal / (1024 * 1024 * 1024)).toFixed(1)} GB RAM`;
 
-  document.getElementById('statTotal').textContent = data.containersTotal;
-  document.getElementById('statRunning').textContent = data.containersRunning;
-  document.getElementById('statStopped').textContent = data.containersStopped;
-  document.getElementById('statImages').textContent = data.imagesTotal;
+  if (document.getElementById('statTotal')) document.getElementById('statTotal').textContent = data.containersTotal;
+  if (document.getElementById('statRunning')) document.getElementById('statRunning').textContent = data.containersRunning;
+  if (document.getElementById('statStopped')) document.getElementById('statStopped').textContent = data.containersStopped;
 
-  document.getElementById('countAll').textContent = data.containersTotal;
-  document.getElementById('countRunning').textContent = data.containersRunning;
-  document.getElementById('countStopped').textContent = data.containersStopped;
+  if (document.getElementById('countAll')) document.getElementById('countAll').textContent = data.containersTotal;
+  if (document.getElementById('countRunning')) document.getElementById('countRunning').textContent = data.containersRunning;
+  if (document.getElementById('countStopped')) document.getElementById('countStopped').textContent = data.containersStopped;
 }
 
 // Render Containers

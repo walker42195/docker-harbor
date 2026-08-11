@@ -203,6 +203,85 @@ app.get('/api/system/info', requireAuth, async (req, res) => {
   }
 });
 
+const os = require('os');
+let prevHostCpuTimes = null;
+
+function getHostCpuPercent() {
+  const cpus = os.cpus();
+  let user = 0, nice = 0, sys = 0, idle = 0, irq = 0;
+  cpus.forEach(cpu => {
+    user += cpu.times.user;
+    nice += cpu.times.nice;
+    sys += cpu.times.sys;
+    idle += cpu.times.idle;
+    irq += cpu.times.irq;
+  });
+
+  const total = user + nice + sys + idle + irq;
+  if (!prevHostCpuTimes) {
+    prevHostCpuTimes = { total, idle };
+    return '0.0%';
+  }
+
+  const totalDelta = total - prevHostCpuTimes.total;
+  const idleDelta = idle - prevHostCpuTimes.idle;
+  prevHostCpuTimes = { total, idle };
+
+  if (totalDelta <= 0) return '0.0%';
+  const usagePercent = ((1 - idleDelta / totalDelta) * 100).toFixed(1);
+  return usagePercent + '%';
+}
+
+function getHostRamMetrics() {
+  const total = os.totalmem();
+  const free = os.freemem();
+  const used = total - free;
+  const totalGb = (total / (1024 * 1024 * 1024)).toFixed(1);
+  const usedGb = (used / (1024 * 1024 * 1024)).toFixed(1);
+  const percent = ((used / total) * 100).toFixed(1);
+  return `${usedGb} GiB / ${totalGb} GiB (${percent}%)`;
+}
+
+async function getHostGpuMetrics(runningContainers) {
+  for (const c of runningContainers) {
+    try {
+      const container = docker.getContainer(c.Id);
+      const exec = await container.exec({
+        Cmd: ['nvidia-smi', '--query-gpu=utilization.gpu,memory.used,memory.total', '--format=csv,noheader,nounits'],
+        AttachStdout: true,
+        AttachStderr: true
+      });
+      const stream = await exec.start();
+      const output = await new Promise((resolve) => {
+        let buf = '';
+        stream.on('data', chunk => buf += chunk.toString());
+        stream.on('end', () => resolve(buf));
+        setTimeout(() => resolve(''), 1500);
+      });
+
+      const clean = output.replace(/[^\x20-\x7E]/g, '').trim();
+      if (clean && clean.includes(',')) {
+        const parts = clean.split(',').map(s => s.trim());
+        if (parts.length >= 3) {
+          const gpuUtil = parseInt(parts[0], 10) || 0;
+          const memUsed = parseFloat(parts[1]) || 0;
+          const memTotal = parseFloat(parts[2]) || 0;
+
+          const usedGb = (memUsed / 1024).toFixed(1);
+          const totalGb = (memTotal / 1024).toFixed(1);
+          const vramPercent = memTotal > 0 ? ((memUsed / memTotal) * 100).toFixed(1) : '0';
+
+          return {
+            gpuPercent: `${gpuUtil}%`,
+            vram: `${usedGb} GiB / ${totalGb} GiB (${vramPercent}%)`
+          };
+        }
+      }
+    } catch (e) {}
+  }
+  return { gpuPercent: '--', vram: '--' };
+}
+
 function formatBytes(bytes) {
   if (!bytes || bytes <= 0) return '0 B';
   const k = 1024;
@@ -354,7 +433,19 @@ app.get('/api/containers', requireAuth, async (req, res) => {
       };
     });
 
-    res.json({ success: true, containers: formatted });
+    const hostCpu = getHostCpuPercent();
+    const hostRam = getHostRamMetrics();
+    const runningContainers = containers.filter(c => c.State === 'running');
+    const hostGpu = await getHostGpuMetrics(runningContainers);
+
+    const hostMetrics = {
+      cpuPercent: hostCpu,
+      ram: hostRam,
+      gpuPercent: hostGpu.gpuPercent,
+      vram: hostGpu.vram
+    };
+
+    res.json({ success: true, containers: formatted, hostMetrics });
   } catch (err) {
     console.error('List containers error:', err);
     res.status(500).json({ success: false, error: 'Kunde inte lista containers: ' + err.message });
