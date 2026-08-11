@@ -4,7 +4,7 @@
   "kde-harbor": "kde ubuntu desktop för att kunna titta på webbsidor, köra program och titta på dem och kompilera kod. Installera program och leka.",
   "clawollama": "ollama",
   "fyui": "Comfyui med Flux 1 dev för stillbilder och MiniMax H3 för att skapa filmer",
-  "master-harbor": "Master Harbor AI-assistent och styrsystem för Ollama, Gemma 4, ComfyUI och SearXNG.",
+  "master-harbor": "Master Harbor  cli och webbchat för att ge uppdrag till lokala AI-assistenter  samt kopplingar till  ComfyUI och SearXNG.",
   "captain-harbor": "Kapten Harbor agentisk skrivbordsmiljö med VNC och X11-skärmgränssnitt.",
   "garmin-sdk": "Garmin Connect IQ SDK-utvecklingsmiljö för Fenix 5X Plus och klockappar.",
   "novabase-dev": "Lokal PHP 8.2 & Apache webbserver för Novabase.se utveckling."

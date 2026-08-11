@@ -203,20 +203,91 @@ app.get('/api/system/info', requireAuth, async (req, res) => {
   }
 });
 
-// List Containers
+function formatBytes(bytes) {
+  if (!bytes || bytes <= 0) return '0 B';
+  const k = 1024;
+  const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
+  const i = Math.floor(Math.log(bytes) / Math.log(k));
+  return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
+}
+
+function formatMibGib(bytes) {
+  if (!bytes || bytes <= 0) return '0 MiB';
+  const mib = bytes / (1024 * 1024);
+  if (mib >= 1024) {
+    return (mib / 1024).toFixed(2) + ' GiB';
+  }
+  return mib.toFixed(1) + ' MiB';
+}
+
+function calculateContainerMetrics(stats) {
+  if (!stats || !stats.cpu_stats) {
+    return { cpuPercent: '--', memory: '--', netIo: '--' };
+  }
+
+  let cpuPercent = 0.0;
+  const cpuDelta = (stats.cpu_stats.cpu_usage ? stats.cpu_stats.cpu_usage.total_usage : 0) -
+                   (stats.precpu_stats && stats.precpu_stats.cpu_usage ? stats.precpu_stats.cpu_usage.total_usage : 0);
+  const systemDelta = (stats.cpu_stats.system_cpu_usage || 0) -
+                      (stats.precpu_stats ? stats.precpu_stats.system_cpu_usage || 0 : 0);
+  const numCpus = (stats.cpu_stats.online_cpus) || 
+                  (stats.cpu_stats.cpu_usage && stats.cpu_stats.cpu_usage.percpu_usage ? stats.cpu_stats.cpu_usage.percpu_usage.length : 1);
+
+  if (systemDelta > 0 && cpuDelta > 0) {
+    cpuPercent = (cpuDelta / systemDelta) * numCpus * 100.0;
+  }
+
+  const usage = stats.memory_stats ? (stats.memory_stats.usage - (stats.memory_stats.stats ? (stats.memory_stats.stats.cache || stats.memory_stats.stats.inactive_file || 0) : 0)) : 0;
+  const limit = stats.memory_stats ? stats.memory_stats.limit : 0;
+
+  const usageStr = formatMibGib(usage);
+  let memFormatted = usageStr;
+  if (limit && limit > 0 && limit < 1e15) {
+    memFormatted = `${usageStr} / ${formatMibGib(limit)}`;
+  }
+
+  let rx = 0;
+  let tx = 0;
+  if (stats.networks) {
+    Object.values(stats.networks).forEach(n => {
+      rx += n.rx_bytes || 0;
+      tx += n.tx_bytes || 0;
+    });
+  }
+  const netFormatted = `↓ ${formatBytes(rx)} / ↑ ${formatBytes(tx)}`;
+
+  return {
+    cpuPercent: cpuPercent.toFixed(1) + '%',
+    memory: memFormatted,
+    netIo: netFormatted
+  };
+}
+
+// Get Containers List
 app.get('/api/containers', requireAuth, async (req, res) => {
   try {
     const containers = await docker.listContainers({ all: true });
     const customDescriptions = loadCustomDescriptions();
 
-    // Fetch inspect details in parallel for restart policies
-    const inspects = await Promise.all(
-      containers.map(c => docker.getContainer(c.Id).inspect().catch(() => null))
+    // Fetch inspect details and stats in parallel
+    const inspectsAndStats = await Promise.all(
+      containers.map(async c => {
+        const inspect = await docker.getContainer(c.Id).inspect().catch(() => null);
+        let stats = null;
+        if (c.State === 'running') {
+          stats = await docker.getContainer(c.Id).stats({ stream: false }).catch(() => null);
+        }
+        return { inspect, stats };
+      })
     );
 
     // Format container objects nicely for UI
     const formatted = containers.map((c, idx) => {
-      const inspectData = inspects[idx];
+      const { inspect: inspectData, stats } = inspectsAndStats[idx];
+      const metrics = (c.State === 'running' && stats)
+        ? calculateContainerMetrics(stats)
+        : { cpuPercent: '--', memory: '--', netIo: '--' };
+
       const restartPolicy = (inspectData && inspectData.HostConfig && inspectData.HostConfig.RestartPolicy && inspectData.HostConfig.RestartPolicy.Name) || 'no';
       const configFile = (c.Labels && c.Labels['com.docker.compose.project.config_files']) || null;
       const workingDir = (c.Labels && c.Labels['com.docker.compose.project.working_dir']) || null;
@@ -278,7 +349,8 @@ app.get('/api/containers', requireAuth, async (req, res) => {
         composeService,
         description,
         hasCompose,
-        hasDockerfile
+        hasDockerfile,
+        metrics
       };
     });
 

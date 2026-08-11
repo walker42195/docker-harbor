@@ -566,6 +566,38 @@ body {
   background: rgba(59, 130, 246, 0.1);
 }
 
+.metrics-bar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 12px;
+  background: rgba(15, 23, 42, 0.6);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: var(--radius-md);
+  margin-bottom: 12px;
+  flex-wrap: wrap;
+  font-size: 12px;
+}
+
+.metric-badge {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-muted);
+}
+
+.metric-badge svg {
+  width: 14px;
+  height: 14px;
+  color: var(--accent-cyan);
+  flex-shrink: 0;
+}
+
+.metric-badge strong {
+  color: var(--text-main);
+  font-family: monospace;
+}
+
 .image-tag {
   font-size: 13px;
   color: var(--text-muted);
