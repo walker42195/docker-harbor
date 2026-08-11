@@ -121,32 +121,75 @@ app.get('/api/system/info', requireAuth, async (req, res) => {
 app.get('/api/containers', requireAuth, async (req, res) => {
   try {
     const containers = await docker.listContainers({ all: true });
-    
+
+    // Fetch inspect details in parallel for restart policies
+    const inspects = await Promise.all(
+      containers.map(c => docker.getContainer(c.Id).inspect().catch(() => null))
+    );
+
     // Format container objects nicely for UI
-    const formatted = containers.map(c => ({
-      id: c.Id,
-      shortId: c.Id.substring(0, 12),
-      names: c.Names.map(n => n.replace(/^\//, '')),
-      image: c.Image,
-      imageId: c.ImageID,
-      command: c.Command,
-      created: c.Created,
-      state: c.State,
-      status: c.Status,
-      ports: c.Ports.map(p => ({
-        IP: p.IP,
-        PrivatePort: p.PrivatePort,
-        PublicPort: p.PublicPort,
-        Type: p.Type
-      })),
-      labels: c.Labels,
-      mounts: c.Mounts
-    }));
+    const formatted = containers.map((c, idx) => {
+      const inspectData = inspects[idx];
+      const restartPolicy = (inspectData && inspectData.HostConfig && inspectData.HostConfig.RestartPolicy && inspectData.HostConfig.RestartPolicy.Name) || 'no';
+      const configFile = (c.Labels && c.Labels['com.docker.compose.project.config_files']) || null;
+      const workingDir = (c.Labels && c.Labels['com.docker.compose.project.working_dir']) || null;
+      const composeProject = (c.Labels && c.Labels['com.docker.compose.project']) || null;
+      const composeService = (c.Labels && c.Labels['com.docker.compose.service']) || null;
+
+      return {
+        id: c.Id,
+        shortId: c.Id.substring(0, 12),
+        names: c.Names.map(n => n.replace(/^\//, '')),
+        image: c.Image,
+        imageId: c.ImageID,
+        command: c.Command,
+        created: c.Created,
+        state: c.State,
+        status: c.Status,
+        ports: c.Ports.map(p => ({
+          IP: p.IP,
+          PrivatePort: p.PrivatePort,
+          PublicPort: p.PublicPort,
+          Type: p.Type
+        })),
+        labels: c.Labels,
+        mounts: c.Mounts,
+        restartPolicy,
+        configFile,
+        workingDir,
+        composeProject,
+        composeService
+      };
+    });
 
     res.json({ success: true, containers: formatted });
   } catch (err) {
     console.error('List containers error:', err);
     res.status(500).json({ success: false, error: 'Kunde inte lista containers: ' + err.message });
+  }
+});
+
+// Update Container Restart Policy
+app.post('/api/containers/:id/restart-policy', requireAuth, async (req, res) => {
+  const { restartPolicy } = req.body;
+  const validPolicies = ['always', 'unless-stopped', 'no', 'on-failure'];
+
+  if (!restartPolicy || !validPolicies.includes(restartPolicy)) {
+    return res.status(400).json({ success: false, error: 'Ogiltig restart policy angiven.' });
+  }
+
+  try {
+    const container = docker.getContainer(req.params.id);
+    await container.update({
+      RestartPolicy: {
+        Name: restartPolicy,
+        MaximumRetryCount: restartPolicy === 'on-failure' ? 5 : 0
+      }
+    });
+    res.json({ success: true, message: `Restart policy ändrades till '${restartPolicy}'.` });
+  } catch (err) {
+    console.error('Update restart policy error:', err);
+    res.status(500).json({ success: false, error: 'Kunde inte uppdatera restart policy: ' + err.message });
   }
 });
 

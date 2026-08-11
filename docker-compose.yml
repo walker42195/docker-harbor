@@ -2,7 +2,7 @@ services:
   docker-harbor:
     build: .
     container_name: docker-harbor
-    restart: always
+    restart: unless-stopped
     ports:
       - "6969:6969"
     volumes:

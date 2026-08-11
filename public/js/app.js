@@ -178,13 +178,8 @@ async function fetchDashboardData(manual = false) {
     }
 
     if (containersRes && containersRes.success) {
-      const newContainers = containersRes.containers || [];
-      const signature = JSON.stringify(newContainers);
-      if (signature !== lastContainersSignature) {
-        lastContainersSignature = signature;
-        containersData = newContainers;
-        renderContainers();
-      }
+      containersData = containersRes.containers || [];
+      renderContainers();
     }
   } catch (err) {
     console.error('Fetch dashboard error:', err);
@@ -221,7 +216,8 @@ function renderContainers() {
       const matchImage = c.image.toLowerCase().includes(searchKeyword);
       const matchId = c.shortId.toLowerCase().includes(searchKeyword);
       const matchPort = c.ports.some(p => p.PublicPort && p.PublicPort.toString().includes(searchKeyword));
-      return matchName || matchImage || matchId || matchPort;
+      const matchPath = (c.configFile || c.workingDir || '').toLowerCase().includes(searchKeyword);
+      return matchName || matchImage || matchId || matchPort || matchPath;
     }
     return true;
   });
@@ -263,6 +259,25 @@ function renderContainers() {
       return `<span class="badge" style="background: rgba(255,255,255,0.05); color: #9ca3af;">${p.PrivatePort}/${p.Type}</span>`;
     }).join(' ');
 
+    // Compose config file or working dir path
+    const displayPath = c.configFile || c.workingDir || null;
+    const pathHtml = displayPath
+      ? `<div class="config-path-box" onclick="copyToClipboard('${escapeHtml(displayPath)}', 'Kopierade sökväg!')" title="Klicka för att kopiera sökväg">
+           <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" />
+           </svg>
+           <span class="config-path-text">${escapeHtml(displayPath)}</span>
+         </div>`
+      : `<div class="config-path-box" style="cursor: default; opacity: 0.5;" title="Ej startad via Docker Compose">
+           <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" />
+           </svg>
+           <span class="config-path-text">Fristående container (Ingen compose-sökväg)</span>
+         </div>`;
+
+    // Restart Policy dropdown
+    const currentPolicy = c.restartPolicy || 'no';
+
     return `
         <div>
           <div class="card-header-top">
@@ -270,7 +285,7 @@ function renderContainers() {
               <span class="status-dot ${stateClass}"></span>
               <span class="container-title" title="${c.names[0]}">${c.names[0]}</span>
             </div>
-            <span class="container-id" onclick="copyToClipboard('${c.id}')" title="Klicka för att kopiera ID">${c.shortId}</span>
+            <span class="container-id" onclick="copyToClipboard('${c.id}', 'Kopierade container-ID!')" title="Klicka för att kopiera ID">${c.shortId}</span>
           </div>
 
           <div class="image-tag">
@@ -280,10 +295,27 @@ function renderContainers() {
             ${escapeHtml(c.image)}
           </div>
 
+          ${pathHtml}
+
           <div class="details-row">
             <span class="badge ${badgeClass}">${stateText}</span>
             <span class="badge" style="background: rgba(255,255,255,0.04); color: var(--text-muted);">${escapeHtml(c.status)}</span>
             ${portsHtml}
+          </div>
+
+          <div class="restart-policy-box">
+            <label>
+              <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+              </svg>
+              Restart:
+            </label>
+            <select class="restart-select" onchange="updateRestartPolicy('${c.id}', this.value)">
+              <option value="always" ${currentPolicy === 'always' ? 'selected' : ''}>always (alltid)</option>
+              <option value="unless-stopped" ${currentPolicy === 'unless-stopped' ? 'selected' : ''}>unless-stopped</option>
+              <option value="on-failure" ${currentPolicy === 'on-failure' ? 'selected' : ''}>on-failure (vid fel)</option>
+              <option value="no" ${currentPolicy === 'no' ? 'selected' : ''}>no (nej)</option>
+            </select>
           </div>
         </div>
 
@@ -326,23 +358,31 @@ function renderContainers() {
     `;
   }
 
-  // Reconcile: reuse existing card DOM nodes for unchanged containers so they
-  // don't get destroyed/recreated (and re-trigger the fade-in animation) on
-  // every poll — only their inner content is refreshed in place.
+  // Reconcile: reuse existing card DOM nodes and update innerHTML ONLY if changed
   const existingCards = new Map();
   containerList.querySelectorAll('.container-card').forEach(el => existingCards.set(el.dataset.id, el));
 
   const usedIds = new Set();
   filtered.forEach(c => {
     usedIds.add(c.id);
+    const innerHtml = cardInnerHtml(c);
     let el = existingCards.get(c.id);
+
     if (!el) {
       el = document.createElement('div');
       el.className = 'container-card glass-panel fade-in';
       el.dataset.id = c.id;
+      el.dataset.innerHtml = innerHtml;
+      el.innerHTML = innerHtml;
+      containerList.appendChild(el);
+      setTimeout(() => el.classList.remove('fade-in'), 400);
+    } else {
+      if (el.dataset.innerHtml !== innerHtml) {
+        el.dataset.innerHtml = innerHtml;
+        el.innerHTML = innerHtml;
+      }
+      containerList.appendChild(el);
     }
-    el.innerHTML = cardInnerHtml(c);
-    containerList.appendChild(el);
   });
 
   existingCards.forEach((el, id) => {
@@ -516,10 +556,35 @@ function showToast(message, type = 'info') {
   }, 4000);
 }
 
+// Update Container Restart Policy
+async function updateRestartPolicy(id, policy) {
+  showToast(`Uppdaterar restart policy till '${policy}'...`, 'info');
+  try {
+    const res = await apiFetch(`/api/containers/${id}/restart-policy`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ restartPolicy: policy })
+    });
+    if (res && res.success) {
+      showToast(res.message, 'success');
+      fetchDashboardData(false);
+    } else {
+      showToast((res && res.error) || 'Kunde inte uppdatera restart policy.', 'error');
+      fetchDashboardData(false);
+    }
+  } catch (err) {
+    showToast('Fel vid uppdatering av restart policy: ' + err.message, 'error');
+    fetchDashboardData(false);
+  }
+}
+
 // Copy to Clipboard
-function copyToClipboard(text) {
+function copyToClipboard(text, label = 'Kopierade till urklipp!') {
+  if (!text) return;
   navigator.clipboard.writeText(text).then(() => {
-    showToast('Kopierade container-ID!', 'info');
+    showToast(label, 'info');
+  }).catch(() => {
+    showToast('Kunde inte kopiera.', 'error');
   });
 }
 
