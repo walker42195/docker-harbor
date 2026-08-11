@@ -9,3 +9,5 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock
     env_file:
       - .env
+    labels:
+      description: "Huvudsaklig kontrollpanel för Docker-containers på servern."

@@ -135,6 +135,13 @@ app.get('/api/containers', requireAuth, async (req, res) => {
       const workingDir = (c.Labels && c.Labels['com.docker.compose.project.working_dir']) || null;
       const composeProject = (c.Labels && c.Labels['com.docker.compose.project']) || null;
       const composeService = (c.Labels && c.Labels['com.docker.compose.service']) || null;
+      const description = (c.Labels && (
+        c.Labels['description'] ||
+        c.Labels['harbor.description'] ||
+        c.Labels['com.docker.harbor.description'] ||
+        c.Labels['org.opencontainers.image.description'] ||
+        c.Labels['info']
+      )) || null;
 
       return {
         id: c.Id,
@@ -158,7 +165,8 @@ app.get('/api/containers', requireAuth, async (req, res) => {
         configFile,
         workingDir,
         composeProject,
-        composeService
+        composeService,
+        description
       };
     });
 

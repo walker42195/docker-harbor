@@ -217,7 +217,8 @@ function renderContainers() {
       const matchId = c.shortId.toLowerCase().includes(searchKeyword);
       const matchPort = c.ports.some(p => p.PublicPort && p.PublicPort.toString().includes(searchKeyword));
       const matchPath = (c.configFile || c.workingDir || '').toLowerCase().includes(searchKeyword);
-      return matchName || matchImage || matchId || matchPort || matchPath;
+      const matchDesc = (c.description || '').toLowerCase().includes(searchKeyword);
+      return matchName || matchImage || matchId || matchPort || matchPath || matchDesc;
     }
     return true;
   });
@@ -275,6 +276,16 @@ function renderContainers() {
            <span class="config-path-text">Fristående container (Ingen compose-sökväg)</span>
          </div>`;
 
+    // Container description box (if label exists in compose / docker config)
+    const descHtml = c.description
+      ? `<div class="container-description-box" title="Infotext från labels">
+           <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+           </svg>
+           <span>${escapeHtml(c.description)}</span>
+         </div>`
+      : '';
+
     // Restart Policy dropdown
     const currentPolicy = c.restartPolicy || 'no';
 
@@ -295,6 +306,7 @@ function renderContainers() {
             ${escapeHtml(c.image)}
           </div>
 
+          ${descHtml}
           ${pathHtml}
 
           <div class="details-row">
