@@ -1,4 +1,11 @@
 {
-  "haddock-telegram_bot-1": "Clawollama kopplat till en Telegramgrupp med inställningen att llm ska svara som Kapten Haddock",
-  "docker-harbor": "Huvudsaklig kontrollpanel för Docker-containers på servern (Live redigerad)."
+  "haddock-telegram_bot-1": "Clawollama kopplat till en Telegramgrupp med inställningen att llm ska svara som Kapten Haddock.",
+  "docker-harbor": "Huvudsaklig kontrollpanel för Docker-containers på servern (Live redigerad).",
+  "kde-harbor": "kde ubuntu desktop för att kunna titta på webbsidor, köra program och titta på dem och kompilera kod. Installera program och leka.",
+  "clawollama": "ollama",
+  "fyui": "Comfyui med Flux 1 dev för stillbilder och MiniMax H3 för att skapa filmer",
+  "master-harbor": "Master Harbor AI-assistent och styrsystem för Ollama, Gemma 4, ComfyUI och SearXNG.",
+  "captain-harbor": "Kapten Harbor agentisk skrivbordsmiljö med VNC och X11-skärmgränssnitt.",
+  "garmin-sdk": "Garmin Connect IQ SDK-utvecklingsmiljö för Fenix 5X Plus och klockappar.",
+  "novabase-dev": "Lokal PHP 8.2 & Apache webbserver för Novabase.se utveckling."
 }
