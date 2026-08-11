@@ -284,7 +284,7 @@ function renderContainers() {
 
     // Container description box (with edit trigger)
     const descHtml = c.description
-      ? `<div class="container-description-box" onclick="openDescModal('${c.id}', '${escapeHtml(c.names[0])}', '${escapeHtml(c.description)}')" title="Klicka för att redigera infotext">
+      ? `<div class="container-description-box" onclick="openDescModal('${c.id}')" title="Klicka för att redigera infotext">
            <div class="desc-content">
              <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
@@ -295,7 +295,7 @@ function renderContainers() {
              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
            </svg>
          </div>`
-      : `<div class="container-description-box empty-desc" onclick="openDescModal('${c.id}', '${escapeHtml(c.names[0])}', '')" title="Klicka för att lägga till infotext">
+      : `<div class="container-description-box empty-desc" onclick="openDescModal('${c.id}')" title="Klicka för att lägga till infotext">
            <div class="desc-content">
              <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4" />
@@ -365,22 +365,22 @@ function renderContainers() {
             Omstart
           </button>
 
-          <button class="action-btn rebuild" onclick="rebuildContainer('${c.id}', '${escapeHtml(c.names[0])}')" title="Bygg Om / Re-create Container">
+          <button class="action-btn rebuild" onclick="rebuildContainer('${c.id}')" title="Bygg Om / Re-create Container">
             <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19.428 15.428a2 2 0 00-1.022-.547l-2.387-.477a6 6 0 00-3.86.517l-.318.158a6 6 0 01-3.86.517L5.6 15.12a2 2 0 00-1.18.118l-.5.25a2 2 0 00-.92 2.21l.5 2a2 2 0 001.94 1.51h13.12a2 2 0 001.94-1.51l.5-2a2 2 0 00-.92-2.21l-.5-.25z" /></svg>
             Bygg Om
           </button>
 
-          <button class="action-btn logs" onclick="openLogsModal('${c.id}', '${escapeHtml(c.names[0])}')" title="Visa Live Loggar">
+          <button class="action-btn logs" onclick="openLogsModal('${c.id}')" title="Visa Live Loggar">
             <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 9l3 3-3 3m5 0h3M5 20h14a2 2 0 002-2V6a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" /></svg>
             Loggar
           </button>
 
-          <button class="action-btn logs" onclick="inspectContainer('${c.id}', '${escapeHtml(c.names[0])}')" title="Inspektera Container Configuration">
+          <button class="action-btn logs" onclick="inspectContainer('${c.id}')" title="Inspektera Container Configuration">
             <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
             Info
           </button>
 
-          <button class="action-btn delete" onclick="openDeleteModal('${c.id}', '${escapeHtml(c.names[0])}')" title="Ta Bort Container" style="grid-column: span 2;">
+          <button class="action-btn delete" onclick="openDeleteModal('${c.id}')" title="Ta Bort Container" style="grid-column: span 2;">
             <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
             Ta Bort
           </button>
@@ -454,7 +454,13 @@ async function restartContainer(id) {
   }
 }
 
-async function rebuildContainer(id, name) {
+function getContainerName(id) {
+  const c = containersData.find(x => x.id === id);
+  return (c && c.names && c.names[0]) ? c.names[0] : id.substring(0, 12);
+}
+
+async function rebuildContainer(id) {
+  const name = getContainerName(id);
   if (!confirm(`Vill du bygga om och skapa om container "${name}"? Det hämtar nyaste imagen och bevarar befintlig konfiguration.`)) return;
 
   showToast(`Bygger om container ${name}... Det kan ta några sekunder.`, 'info');
@@ -467,7 +473,8 @@ async function rebuildContainer(id, name) {
   }
 }
 
-async function inspectContainer(id, name) {
+async function inspectContainer(id) {
+  const name = getContainerName(id);
   document.getElementById('inspectContainerTitle').textContent = name;
   document.getElementById('inspectContent').textContent = 'Hämtar data...';
   document.getElementById('inspectModal').classList.add('active');
@@ -485,7 +492,8 @@ function closeInspectModal() {
 }
 
 // Log Stream Modal (WebSocket)
-function openLogsModal(id, name) {
+function openLogsModal(id) {
+  const name = getContainerName(id);
   document.getElementById('logContainerTitle').textContent = name;
   const output = document.getElementById('terminalLogOutput');
   output.textContent = 'Kopplar upp live-loggström...\n';
@@ -536,7 +544,8 @@ function closeLogModal() {
 }
 
 // Delete Modal
-function openDeleteModal(id, name) {
+function openDeleteModal(id) {
+  const name = getContainerName(id);
   pendingDeleteId = id;
   document.getElementById('deleteTargetName').textContent = name;
   document.getElementById('chkForce').checked = false;
@@ -621,10 +630,14 @@ function copyToClipboard(text, label = 'Kopierade till urklipp!') {
 // Description Modal Handlers
 let pendingDescId = null;
 
-function openDescModal(id, name, currentDesc) {
+function openDescModal(id) {
+  const c = containersData.find(x => x.id === id);
+  const name = getContainerName(id);
+  const currentDesc = c ? (c.description || '') : '';
+
   pendingDescId = id;
   document.getElementById('descContainerName').textContent = name;
-  document.getElementById('descInputText').value = currentDesc || '';
+  document.getElementById('descInputText').value = currentDesc;
   document.getElementById('descModal').classList.add('active');
   setTimeout(() => document.getElementById('descInputText').focus(), 100);
 }
