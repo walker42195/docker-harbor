@@ -294,9 +294,10 @@ Skriptet sköter allt självt:
 1. Kontrollerar att du kan skriva till installationskatalogen, och säger till
    direkt om du behöver `sudo` i stället för att fela halvvägs.
 2. Läser serverns compose-labels och monterar de kataloger som behövs.
-3. **Hämtar agent-imagen från hubben.** Imagen finns inte på Docker Hub, så
+3. **Hämtar agent-imagen från hubben** när den saknas eller är inaktuell —
+   skriptet jämför image-id med hubbens. Imagen finns inte på Docker Hub, så
    servern behöver varken register, `docker login` eller internetåtkomst
-   utanför ditt eget nät.
+   utanför ditt eget nät. Kör om kommandot för att uppdatera en agent.
 4. Känner av NVIDIA-GPU och slår bara på GPU-mätning om kortet bevisligen kan
    skickas in i en container.
 5. Skriver `.env` med `chmod 600` och startar agenten.
@@ -509,6 +510,7 @@ cd /opt/harbor-agent && docker compose logs -f harbor-agent
 | `finns redan och verkar tillhora nagot annat` | Katalogen används av ett annat program. Välj en annan: `sudo HARBOR_INSTALL_DIR=/opt/min-agent sh`. Radera inte den befintliga. |
 | `pull access denied for docker-harbor-agent` | Gammal agentversion, eller imagen kunde inte hämtas från hubben. Bygg den på hubben: `docker build -f agent/Dockerfile -t docker-harbor-agent:latest .` — `setup.sh` gör det åt dig. |
 | `kunde inte hamta agent-imagen fran hubben` | Hubben saknar imagen. Kör `./setup.sh` på hubben, eller bygg den för hand med kommandot ovan. |
+| Agenten beter sig som en äldre version | Kontrollera att imagen är uppdaterad: `docker image inspect docker-harbor-agent:latest --format "{{.Created}}"` på servern, och jämför med hubben. Kör om installationskommandot — det hämtar en ny image när id:t skiljer sig. |
 | `Servern är i skrivskyddat läge` (i UI:t) | `HARBOR_READ_ONLY=true` på agenten. |
 | `Servern är låst` (i UI:t) | Servern behöver låsas upp med lösenord i gränssnittet. |
 

@@ -13,7 +13,7 @@ const { UnlockManager } = require('./lib/unlock');
 const descriptions = require('./lib/descriptions');
 const { createMiddleware } = require('./lib/routes/middleware');
 const { createContainersRouter } = require('./lib/routes/containers');
-const { createServersRouter, createInstallRoute, createInstallImageRoute } = require('./lib/routes/servers');
+const { createServersRouter, createInstallRoute, createInstallImageRoute, createInstallImageIdRoute } = require('./lib/routes/servers');
 const { createLogsHandler } = require('./lib/logsWs');
 
 const app = express();
@@ -89,6 +89,7 @@ app.post('/api/auth/logout', (req, res) => {
 // Agent-imagen, skyddad av samma engångskod. Låter fjärrservern hämta imagen
 // direkt från hubben i stället för att kräva ett register.
 app.get('/install/:code/image', createInstallImageRoute({ hub, agentImage: AGENT_IMAGE }));
+app.get('/install/:code/image-id', createInstallImageIdRoute({ hub, agentImage: AGENT_IMAGE }));
 
 app.get('/install/:code', createInstallRoute({
   hub,
