@@ -66,6 +66,7 @@ Skriptet känner av värdens förutsättningar och anpassar installationen:
 | **Projektkataloger** | Läser compose-labels från **hubbmaskinens egna** containers och monterar precis de kataloger som behövs — ofta fler än en. Kör hubben på en dedikerad server monteras ingenting, vilket är rätt: fjärrservrarnas filer läses av deras egna agenter. Styr själv med `HARBOR_PROJECTS_DIR=/en:/annan ./setup.sh`. |
 | **Hemligheter** | Skapar `.env` med slumpade `JWT_SECRET`, `ADMIN_PASSWORD` och `WRITE_UNLOCK_PASSWORD` (`chmod 600`). Det genererade inloggningslösenordet skrivs ut en gång. |
 | **Data** | Skapar `data/` för lokal körning. I Docker används den namngivna volymen `harbor-data`. |
+| **Agent-image** | Bygger `docker-harbor-agent:latest` så hubben kan servera den till fjärrservrar. Då räcker ett enda kommando på den servern — inget register, ingen SSH. |
 
 Resultatet skrivs till `docker-compose.override.yml`, som Docker Compose slår
 ihop med `docker-compose.yml` automatiskt. Basfilen förblir generisk och
@@ -263,42 +264,7 @@ hubben över WebSocket:
 - Agenten rapporterar även host-CPU, RAM, GPU och VRAM — sådant ett rent
   Docker-API över TLS inte kan ge.
 
-### Steg 1: Bygg och distribuera agent-imagen
-
-Build-contexten måste vara **repots rot**, eftersom agenten delar kod med hubben
-i `shared/`:
-
-```bash
-docker build -f agent/Dockerfile -t docker-harbor-agent:latest .
-```
-
-Fjärrservern måste kunna hämta imagen. Välj ett sätt:
-
-**A. Via ett register** (smidigast om du har ett):
-
-```bash
-docker tag docker-harbor-agent:latest ghcr.io/walker42195/docker-harbor-agent:latest
-docker push ghcr.io/walker42195/docker-harbor-agent:latest
-```
-
-Sätt sedan `HARBOR_AGENT_IMAGE=ghcr.io/walker42195/docker-harbor-agent:latest`
-i hubbens `.env` så pekar installationsskriptet på rätt image.
-
-**B. Överför imagen direkt:**
-
-```bash
-docker save docker-harbor-agent:latest | ssh root@fjärrservern 'docker load'
-```
-
-**C. Bygg på fjärrservern:**
-
-```bash
-git clone https://github.com/walker42195/docker-harbor.git
-cd docker-harbor
-docker build -f agent/Dockerfile -t docker-harbor-agent:latest .
-```
-
-### Steg 2: Registrera servern i gränssnittet
+### Steg 1: Registrera servern i gränssnittet
 
 Klicka **Lägg till server** och fyll i:
 
@@ -309,17 +275,28 @@ Klicka **Lägg till server** och fyll i:
 | **Publik adress** | Valfritt. Adressen containrarnas portlänkar ska peka på, t.ex. `192.168.1.42`. Utan den blir portbadgarna oklickbara. |
 | **Färg** | Färgen på flikens kant, för att skilja servrarna åt. |
 
-### Steg 3: Kör kommandot på servern
+### Steg 2: Kör kommandot på servern
 
-Du får ett kommando med hubbens adress redan inbakad:
+Du får ett kommando med hubbens adress redan inbakad. Kör det **med `sudo`** —
+det skriver till `/opt/harbor-agent` och pratar med Docker:
 
 ```bash
-curl -fsSL https://din-hubb/install/<kod> | sh
+curl -fsSL https://din-hubb/install/<kod> | sudo sh
 ```
 
-Skriptet lägger allt i `/opt/harbor-agent`, skriver en `.env` med `chmod 600`
-och startar agenten med `docker compose up -d`. Servern dyker upp som en ny flik
-inom några sekunder.
+Skriptet sköter allt självt:
+
+1. Kontrollerar att du kan skriva till installationskatalogen, och säger till
+   direkt om du behöver `sudo` i stället för att fela halvvägs.
+2. Läser serverns compose-labels och monterar de kataloger som behövs.
+3. **Hämtar agent-imagen från hubben.** Imagen finns inte på Docker Hub, så
+   servern behöver varken register, `docker login` eller internetåtkomst
+   utanför ditt eget nät.
+4. Känner av NVIDIA-GPU och slår bara på GPU-mätning om kortet bevisligen kan
+   skickas in i en container.
+5. Skriver `.env` med `chmod 600` och startar agenten.
+
+Servern dyker upp som en ny flik inom några sekunder.
 
 Koden gäller i **30 minuter** och kan bara användas **en gång**. Den är inte den
 permanenta nyckeln: agenten byter den mot en riktig token vid första
@@ -327,6 +304,25 @@ anslutningen och sparar den i sin egen volym.
 
 Behöver du en ny kod — ominstallation eller nyckelrotation — skapar du en från
 serverfliken i gränssnittet.
+
+### Bygga agent-imagen för hand
+
+`setup.sh` bygger den åt dig på hubben. Vill du göra det själv måste
+build-contexten vara **repots rot** — agenten delar kod med hubben i `shared/`:
+
+```bash
+docker build -f agent/Dockerfile -t docker-harbor-agent:latest .
+```
+
+Imagen ligger medvetet inte på Docker Hub. Hubben serverar den i stället själv
+på `/install/<kod>/image`, skyddad av samma engångskod. Fjärrservern behöver
+därför varken register, `docker login` eller åtkomst till internet utanför ditt
+eget nät — bara till hubben.
+
+Vill du ändå använda ett eget register: tagga och pusha, och sätt
+`HARBOR_AGENT_IMAGE=ghcr.io/dittnamn/docker-harbor-agent:latest` i hubbens
+`.env`. Imagen behöver ändå finnas på hubben, eftersom det är därifrån
+installationsskriptet hämtar den.
 
 ### Alternativ: via CLI
 
@@ -501,6 +497,9 @@ cd /opt/harbor-agent && docker compose logs -f harbor-agent
 | `hubben nekade åtkomst (4403 ...)` | Fel server-ID eller token. Skapa en ny installationskod. |
 | `frånkopplad (...), återansluter om ...` | Normalt vid nätverksavbrott. Agenten backar av upp till 30 sekunder. |
 | `KUNDE INTE spara token` | `/data`-volymen saknas eller är skrivskyddad. |
+| `cannot create .env: Permission denied` | Kör installationskommandot med `sudo`. |
+| `pull access denied for docker-harbor-agent` | Gammal agentversion, eller imagen kunde inte hämtas från hubben. Bygg den på hubben: `docker build -f agent/Dockerfile -t docker-harbor-agent:latest .` — `setup.sh` gör det åt dig. |
+| `kunde inte hamta agent-imagen fran hubben` | Hubben saknar imagen. Kör `./setup.sh` på hubben, eller bygg den för hand med kommandot ovan. |
 | `Servern är i skrivskyddat läge` (i UI:t) | `HARBOR_READ_ONLY=true` på agenten. |
 | `Servern är låst` (i UI:t) | Servern behöver låsas upp med lösenord i gränssnittet. |
 

@@ -241,11 +241,29 @@ if ! $COMPOSE config -q 2>/dev/null; then
 fi
 ok "compose-konfigurationen validerar"
 
+# ------------------------------------------------------- 7. Agent-imagen
+say ""
+say "Agent-image"
+info "Byggs har sa hubben kan servera den till fjarrservrar. Da racker det"
+info "med ett kommando pa den servern -- inget register, ingen SSH."
+
+# || true: grep returnerar 1 nar raden saknas, och set -e skulle doda skriptet.
+AGENT_IMAGE=$( { grep -E '^HARBOR_AGENT_IMAGE=' "$ENV_FILE" || true; } 2>/dev/null | cut -d= -f2- )
+AGENT_IMAGE="${AGENT_IMAGE:-docker-harbor-agent:latest}"
+
+if docker build -f agent/Dockerfile -t "$AGENT_IMAGE" . >/dev/null 2>&1; then
+  ok "byggde $AGENT_IMAGE"
+else
+  warn "kunde inte bygga $AGENT_IMAGE."
+  warn "Fjarrservrar kan da inte hamta agenten fran hubben."
+  warn "Bygg den for hand: docker build -f agent/Dockerfile -t $AGENT_IMAGE ."
+fi
+
 # ---------------------------------------------------------------- 7. Klart
 say ""
 say "Klart. Starta med:"
 say ""
 say "    $COMPOSE up -d --build"
 say ""
-say "Gränssnittet nås sedan på http://localhost:$(grep -E '^PORT=' "$ENV_FILE" | cut -d= -f2)"
+say "Gränssnittet nås sedan på http://localhost:$( { grep -E '^PORT=' "$ENV_FILE" || echo 'PORT=6969'; } | cut -d= -f2 )"
 say ""
