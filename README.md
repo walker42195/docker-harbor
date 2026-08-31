@@ -284,6 +284,11 @@ det skriver till `/opt/harbor-agent` och pratar med Docker:
 curl -fsSL https://din-hubb/install/<kod> | sudo sh
 ```
 
+Skriptet installerar i `/opt/docker-harbor-agent` och **vägrar skriva över en
+katalog som tillhör något annat**. Flera projekt använder namnet
+`harbor-agent` — radera aldrig en sådan katalog för att "rensa" inför en
+ominstallation utan att veta vad den innehåller.
+
 Skriptet sköter allt självt:
 
 1. Kontrollerar att du kan skriva till installationskatalogen, och säger till
@@ -498,6 +503,7 @@ cd /opt/harbor-agent && docker compose logs -f harbor-agent
 | `frånkopplad (...), återansluter om ...` | Normalt vid nätverksavbrott. Agenten backar av upp till 30 sekunder. |
 | `KUNDE INTE spara token` | `/data`-volymen saknas eller är skrivskyddad. |
 | `cannot create .env: Permission denied` | Kör installationskommandot med `sudo`. |
+| `finns redan och verkar tillhora nagot annat` | Katalogen används av ett annat program. Välj en annan: `sudo HARBOR_INSTALL_DIR=/opt/min-agent sh`. Radera inte den befintliga. |
 | `pull access denied for docker-harbor-agent` | Gammal agentversion, eller imagen kunde inte hämtas från hubben. Bygg den på hubben: `docker build -f agent/Dockerfile -t docker-harbor-agent:latest .` — `setup.sh` gör det åt dig. |
 | `kunde inte hamta agent-imagen fran hubben` | Hubben saknar imagen. Kör `./setup.sh` på hubben, eller bygg den för hand med kommandot ovan. |
 | `Servern är i skrivskyddat läge` (i UI:t) | `HARBOR_READ_ONLY=true` på agenten. |

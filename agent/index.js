@@ -38,6 +38,8 @@ const docker = new Docker({ socketPath: CFG.sockPath });
 
 let ws = null;
 let snapTimer = null;
+let hbTimer = null;
+let lastPong = 0;
 let backoff = 1000;
 let seq = 0;
 const streams = new Map(); // reqId -> stream handle
@@ -105,6 +107,8 @@ function connect() {
     });
   });
 
+  ws.on('pong', () => { lastPong = Date.now(); });
+
   ws.on('message', async (raw) => {
     let msg;
     try {
@@ -118,6 +122,7 @@ function connect() {
       if (msg.token) storeToken(msg.token);
       console.log(`[agent] ansluten till hubben (hub ${msg.hubVersion}), rapporterar var ${msg.snapshotIntervalMs || CFG.snapshotMs} ms`);
       startSnapshotLoop(msg.snapshotIntervalMs || CFG.snapshotMs);
+      startHeartbeat();
       return;
     }
 
@@ -167,9 +172,29 @@ function connect() {
   });
 }
 
+const HEARTBEAT_MS = 20000;
+const PONG_TIMEOUT_MS = 60000;
+
+function startHeartbeat() {
+  clearInterval(hbTimer);
+  lastPong = Date.now();
+  hbTimer = setInterval(() => {
+    if (!ws || ws.readyState !== WebSocket.OPEN) return;
+    if (Date.now() - lastPong > PONG_TIMEOUT_MS) {
+      console.warn('[agent] hubben svarar inte, river anslutningen');
+      try { ws.terminate(); } catch (err) {}
+      return;
+    }
+    try { ws.ping(); } catch (err) {}
+  }, HEARTBEAT_MS);
+  if (hbTimer.unref) hbTimer.unref();
+}
+
 function teardown() {
   clearInterval(snapTimer);
   snapTimer = null;
+  clearInterval(hbTimer);
+  hbTimer = null;
   for (const s of streams.values()) {
     try { s.close(); } catch (err) {}
   }
