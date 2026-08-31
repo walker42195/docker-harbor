@@ -15,6 +15,7 @@ Varje server får en egen flik med sina containers, sina host-metrics och sitt e
 - [Inställningar för hubben](#inställningar-för-hubben)
 - [Lägga till fler Docker-servrar](#lägga-till-fler-docker-servrar)
 - [Inställningar för agenten](#inställningar-för-agenten)
+- [Rensa system](#rensa-system)
 - [Säkerhet](#säkerhet)
 - [Drift och underhåll](#drift-och-underhåll)
 - [Felsökning](#felsökning)
@@ -32,7 +33,7 @@ Varje server får en egen flik med sina containers, sina host-metrics och sitt e
 - 🔍 **Inspektera**: Fullständig JSON-konfiguration — miljövariabler, nätverk, mount-sökvägar.
 - 📄 **Compose & Dockerfile**: Läs `docker-compose.yml` och `Dockerfile` direkt i gränssnittet.
 - 📝 **Infotexter**: Egna beskrivningar per container, som även skrivs tillbaka som `description:`-label i serverns riktiga `docker-compose.yml`.
-- 🧹 **System prune**: Rensa oanvända containers och images, per server.
+- 🧹 **System prune**: Rensa per server, med förhandsvisning av exakt vad som försvinner och hur mycket som frigörs innan du bekräftar.
 - 🔒 **Skrivskydd**: Fjärrservrar är skrivskyddade som standard och låses upp med lösenord.
 
 ---
@@ -388,6 +389,30 @@ cd /opt/harbor-agent && docker compose up -d
 | GPU-konfiguration | Nej | Läggs till automatiskt av installationsskriptet när det hittar en GPU **och** verifierat att den kan skickas in i en container. Ingen manuell mount — se [Om NVIDIA-GPU](#om-nvidia-gpu). |
 
 Se `agent/README.md` och `agent/docker-compose.example.yml` för mer.
+
+---
+
+## Rensa system
+
+Knappen **Rensa System** i serverfältet visar först en förhandsvisning av vad
+som skulle tas bort på just den servern, med storlek per kategori:
+
+| Kategori | Förvalt | Vad det är |
+|---|---|---|
+| Stoppade containers | ✅ | Alla containers som inte kör. Permanent. |
+| Otaggade image-lager | ✅ | `<none>`-lager som ingen image pekar på. Går alltid att bygga om. |
+| Alla oanvända images | ❌ | Även taggade images som ingen container använder. Måste hämtas eller byggas på nytt. |
+| Byggcache | ❌ | Mellanlager från tidigare byggen. Nästa ombyggnad blir långsammare. |
+| Oanvända nätverk | ❌ | Nätverk utan anslutna containers. Återskapas av compose. |
+| Oanvända volymer | ❌ | **Kan radera data som inte går att återskapa.** |
+
+Inget tas bort förrän du bekräftar, och totalsumman uppdateras medan du kryssar.
+
+**Om volymer.** En volym räknas som oanvänd så fort ingen *körande* container
+använder den — även om den tillhör en tjänst du bara stoppat tillfälligt. Där
+kan det ligga databaser, certifikat och uppladdningar. Därför är rutan aldrig
+förvald, den är rödmarkerad, och den kräver en extra bekräftelse. Kryssa i den
+bara när du vet exakt vilka volymer som listas.
 
 ---
 

@@ -333,19 +333,117 @@ async function writeComposeDescription(docker, id, description) {
   return { containerName, composeUpdated };
 }
 
+// ======================= PRUNE =======================
+
+const PREDEFINED_NETWORKS = ['bridge', 'host', 'none'];
+
+// Vad en rensning skulle ta bort, utan att ta bort något. Docker har ingen
+// dry-run for prune, sa vi listar sjalva vad som matchar samma kriterier.
+async function pruneInfo(docker) {
+  const [stopped, dangling, df, networks] = await Promise.all([
+    docker.listContainers({ all: true, filters: { status: ['exited', 'created', 'dead'] } }).catch(() => []),
+    docker.listImages({ filters: { dangling: ['true'] } }).catch(() => []),
+    docker.df().catch(() => ({})),
+    docker.listNetworks().catch(() => [])
+  ]);
+
+  const dfImages = df.Images || [];
+  const unusedImages = dfImages.filter(i => (i.Containers || 0) === 0);
+  const sum = (arr, f) => arr.reduce((n, x) => n + (f(x) || 0), 0);
+
+  const danglingIds = new Set(dangling.map(i => i.Id));
+  const danglingUnused = unusedImages.filter(i => danglingIds.has(i.Id));
+  // Otaggade lager som inte langre ingar i nagon image
+  const danglingSize = danglingUnused.length
+    ? sum(danglingUnused, i => i.Size)
+    : sum(dangling, i => i.Size);
+
+  const volumes = (df.Volumes || []).filter(v => !v.UsageData || v.UsageData.RefCount === 0);
+  const buildCache = (df.BuildCache || []).filter(c => !c.InUse);
+  const unusedNetworks = networks.filter(n =>
+    !PREDEFINED_NETWORKS.includes(n.Name) &&
+    (!n.Containers || Object.keys(n.Containers).length === 0)
+  );
+
+  return {
+    containers: stopped.map(c => ({
+      id: c.Id,
+      name: (c.Names && c.Names[0] ? c.Names[0] : c.Id).replace(/^\//, ''),
+      image: c.Image,
+      status: c.Status,
+      size: c.SizeRw || 0
+    })),
+    danglingImages: { count: danglingUnused.length || dangling.length, size: danglingSize },
+    unusedImages: { count: unusedImages.length, size: sum(unusedImages, i => i.Size) },
+    volumes: volumes.map(v => ({
+      name: v.Name,
+      size: (v.UsageData && v.UsageData.Size > 0) ? v.UsageData.Size : 0
+    })),
+    networks: unusedNetworks.map(n => ({ name: n.Name })),
+    buildCache: { count: buildCache.length, size: sum(buildCache, c => c.Size) }
+  };
+}
+
+// Rensning med explicit omfattning. Standard motsvarar det knappen alltid
+// gjort: stoppade containers + otaggade image-lager. Allt annat ar opt-in.
+async function pruneSystem(docker, opts) {
+  const removed = { containers: [], images: 0, volumes: [], networks: [], buildCache: 0 };
+  let reclaimed = 0;
+
+  if (opts.containers !== false) {
+    const r = await docker.pruneContainers();
+    removed.containers = r.ContainersDeleted || [];
+    reclaimed += r.SpaceReclaimed || 0;
+  }
+
+  if (opts.images === 'all') {
+    // dangling=false betyder "aven taggade images som ingen container anvander"
+    const r = await docker.pruneImages({ filters: JSON.stringify({ dangling: ['false'] }) });
+    removed.images = (r.ImagesDeleted || []).length;
+    reclaimed += r.SpaceReclaimed || 0;
+  } else if (opts.images !== 'none') {
+    const r = await docker.pruneImages();
+    removed.images = (r.ImagesDeleted || []).length;
+    reclaimed += r.SpaceReclaimed || 0;
+  }
+
+  if (opts.networks) {
+    const r = await docker.pruneNetworks();
+    removed.networks = r.NetworksDeleted || [];
+  }
+
+  if (opts.buildCache) {
+    const r = await docker.pruneBuilder();
+    removed.buildCache = (r.CachesDeleted || []).length;
+    reclaimed += r.SpaceReclaimed || 0;
+  }
+
+  // Volymer sist och bara pa uttrycklig begaran -- det ar den enda delen som
+  // kan forstora data som inte gar att bygga om.
+  if (opts.volumes) {
+    const r = await docker.pruneVolumes();
+    removed.volumes = r.VolumesDeleted || [];
+    reclaimed += r.SpaceReclaimed || 0;
+  }
+
+  return {
+    containersDeleted: removed.containers,
+    imagesDeleted: removed.images,
+    volumesDeleted: removed.volumes,
+    networksDeleted: removed.networks,
+    buildCacheDeleted: removed.buildCache,
+    spaceReclaimed: reclaimed
+  };
+}
+
 // ======================= OP TABLE =======================
 
 const OPS = {
   'system.info': (docker) => systemInfo(docker),
 
-  'system.prune': async (docker) => {
-    const prunedContainers = await docker.pruneContainers();
-    const prunedImages = await docker.pruneImages();
-    return {
-      containersDeleted: prunedContainers.ContainersDeleted || [],
-      spaceReclaimed: (prunedContainers.SpaceReclaimed || 0) + (prunedImages.SpaceReclaimed || 0)
-    };
-  },
+  'system.prune': (docker, a) => pruneSystem(docker, a),
+
+  'system.pruneInfo': (docker) => pruneInfo(docker),
 
   'host.metrics': (docker) => hostMetrics(docker),
 
@@ -468,6 +566,8 @@ function openLogStream(docker, args, { onChunk, onEnd, onError }) {
 module.exports = {
   execOp,
   primaryConfigFile,
+  pruneInfo,
+  pruneSystem,
   openLogStream,
   OPS,
   listContainers,

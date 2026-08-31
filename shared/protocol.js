@@ -81,6 +81,23 @@ const OP_SPECS = {
   },
   'system.prune': {
     mutates: true,
+    validate: (a) => {
+      const images = ['none', 'dangling', 'all'].includes(a.images) ? a.images : 'dangling';
+      return {
+        containers: a.containers !== false,
+        images,
+        networks: a.networks === true,
+        buildCache: a.buildCache === true,
+        // Volymer kan innehalla data som inte gar att aterskapa -- aldrig
+        // pa som standard, aldrig av misstag.
+        volumes: a.volumes === true
+      };
+    }
+  },
+
+  // Ren lasning: visar vad en rensning skulle ta bort.
+  'system.pruneInfo': {
+    mutates: false,
     validate: () => ({})
   },
   'snapshot': {

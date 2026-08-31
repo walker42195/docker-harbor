@@ -99,24 +99,8 @@ function setupEventListeners() {
     fetchDashboardData(true);
   });
 
-  // Prune Button (scoped to the active server)
-  document.getElementById('pruneBtn').addEventListener('click', async () => {
-    const srv = activeServer();
-    if (!srv) return;
-    if (!confirm(`Vill du rensa bort alla stoppade containers och oanvända Docker-bilder på "${srv.name}"?`)) return;
-    showToast(`Rensar Docker-systemet på ${srv.name}...`, 'info');
-    try {
-      const res = await apiFetch(`/api/servers/${srv.id}/system/prune`, { method: 'POST' });
-      if (res.success) {
-        showToast(`Systemrensning klar! ${res.containersDeleted.length} containers rensades.`, 'success');
-        fetchDashboardData();
-      } else {
-        showToast(res.error, 'error');
-      }
-    } catch (err) {
-      showToast('Kunde inte utföra prune.', 'error');
-    }
-  });
+  // Prune Button (scoped to the active server) -- öppnar förhandsvisningen
+  document.getElementById('pruneBtn').addEventListener('click', openPruneModal);
 
   // Search Input
   searchInput.addEventListener('input', (e) => {
@@ -1105,5 +1089,202 @@ async function handleRemoveServer() {
     }
   } catch (err) {
     showToast('Fel: ' + err.message, 'error');
+  }
+}
+
+// ======================= SYSTEMRENSNING =======================
+
+let prunePreview = null;
+let pruneServerId = null;
+
+function formatSize(bytes) {
+  if (!bytes || bytes <= 0) return '0 B';
+  const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+  const i = Math.min(Math.floor(Math.log(bytes) / Math.log(1024)), units.length - 1);
+  return (bytes / Math.pow(1024, i)).toFixed(i === 0 ? 0 : 1) + ' ' + units[i];
+}
+
+// Visar upp till `max` namn och räknar resten, så listan inte svämmar över.
+function namesSummary(list, max) {
+  if (!list.length) return 'inget att rensa';
+  const shown = list.slice(0, max).join(', ');
+  return list.length > max ? `${shown} och ${list.length - max} till` : shown;
+}
+
+async function openPruneModal() {
+  const srv = activeServer();
+  if (!srv) return;
+
+  pruneServerId = srv.id;
+  prunePreview = null;
+  document.getElementById('pruneServerName').textContent = srv.name;
+  document.getElementById('pruneOptions').textContent = 'Hämtar förhandsvisning...';
+  document.getElementById('pruneTotal').textContent = '';
+  document.getElementById('pruneConfirmBtn').disabled = true;
+  document.getElementById('pruneModal').classList.add('active');
+
+  try {
+    const res = await apiFetch(`/api/servers/${srv.id}/system/prune-preview`);
+    if (!res || !res.success) {
+      document.getElementById('pruneOptions').textContent =
+        (res && res.error) || 'Kunde inte hämta förhandsvisning.';
+      return;
+    }
+    prunePreview = res.preview;
+    renderPruneOptions();
+  } catch (err) {
+    document.getElementById('pruneOptions').textContent = 'Fel: ' + err.message;
+  }
+}
+
+function renderPruneOptions() {
+  const p = prunePreview;
+  // Otaggade lager ingår i "alla oanvända", så de två raderna överlappar.
+  const extraImages = Math.max(0, p.unusedImages.count - p.danglingImages.count);
+  const extraImageSize = Math.max(0, p.unusedImages.size - p.danglingImages.size);
+
+  const rows = [
+    {
+      key: 'containers', checked: true, count: p.containers.length,
+      size: p.containers.reduce((n, c) => n + (c.size || 0), 0),
+      name: 'Stoppade containers',
+      detail: namesSummary(p.containers.map(c => c.name), 6)
+    },
+    {
+      key: 'imagesDangling', checked: true, count: p.danglingImages.count,
+      size: p.danglingImages.size,
+      name: 'Otaggade image-lager',
+      detail: 'Lager som ingen image längre pekar på. Går alltid att bygga om.'
+    },
+    {
+      key: 'imagesAll', checked: false, count: extraImages, size: extraImageSize,
+      name: 'Alla oanvända images',
+      detail: 'Även taggade images som ingen container använder just nu.',
+      warn: 'Måste hämtas eller byggas på nytt nästa gång de behövs.'
+    },
+    {
+      key: 'buildCache', checked: false, count: p.buildCache.count, size: p.buildCache.size,
+      name: 'Byggcache',
+      detail: 'Mellanlager från tidigare byggen.',
+      warn: 'Nästa ombyggnad blir långsammare.'
+    },
+    {
+      key: 'networks', checked: false, count: p.networks.length, size: 0,
+      name: 'Oanvända nätverk',
+      detail: namesSummary(p.networks.map(n => n.name), 6)
+    },
+    {
+      key: 'volumes', checked: false, count: p.volumes.length,
+      size: p.volumes.reduce((n, v) => n + (v.size || 0), 0),
+      name: 'Oanvända volymer', risky: true,
+      detail: namesSummary(p.volumes.map(v => v.name), 4),
+      warn: 'Kan innehålla data som inte går att återskapa — databaser, certifikat, uppladdningar. En volym räknas som oanvänd så fort ingen container använder den just nu, även om den tillhör en stoppad tjänst.'
+    }
+  ];
+
+  document.getElementById('pruneOptions').innerHTML = rows.map(r => `
+    <label class="prune-row${r.count ? '' : ' is-empty'}${r.risky ? ' is-risky' : ''}">
+      <input type="checkbox" data-prune="${r.key}" ${r.checked && r.count ? 'checked' : ''} ${r.count ? '' : 'disabled'}>
+      <span class="prune-label">
+        <span class="prune-label-top">
+          <span class="prune-name">${escapeHtml(r.name)} (${r.count})</span>
+          ${r.size > 0 ? `<span class="prune-size">${formatSize(r.size)}</span>` : ''}
+        </span>
+        <span class="prune-detail">${escapeHtml(r.detail)}</span>
+        ${r.warn ? `<span class="prune-warn">${escapeHtml(r.warn)}</span>` : ''}
+      </span>
+    </label>
+  `).join('');
+
+  document.querySelectorAll('#pruneOptions input[data-prune]').forEach(cb => {
+    cb.addEventListener('change', () => {
+      // "Alla oanvända" är en delmängd som förutsätter de otaggade.
+      if (cb.dataset.prune === 'imagesAll' && cb.checked) {
+        const d = document.querySelector('#pruneOptions input[data-prune="imagesDangling"]');
+        if (d && !d.disabled) d.checked = true;
+      }
+      updatePruneTotal(rows);
+    });
+  });
+  updatePruneTotal(rows);
+}
+
+function selectedPruneScope() {
+  const on = k => {
+    const cb = document.querySelector(`#pruneOptions input[data-prune="${k}"]`);
+    return !!(cb && cb.checked && !cb.disabled);
+  };
+  return {
+    containers: on('containers'),
+    images: on('imagesAll') ? 'all' : (on('imagesDangling') ? 'dangling' : 'none'),
+    buildCache: on('buildCache'),
+    networks: on('networks'),
+    volumes: on('volumes')
+  };
+}
+
+function updatePruneTotal(rows) {
+  let total = 0;
+  let any = false;
+  rows.forEach(r => {
+    const cb = document.querySelector(`#pruneOptions input[data-prune="${r.key}"]`);
+    if (cb && cb.checked && !cb.disabled) {
+      total += r.size;
+      any = true;
+    }
+  });
+  document.getElementById('pruneTotal').innerHTML =
+    `Frigörs (uppskattat) <span>${formatSize(total)}</span>`;
+  document.getElementById('pruneConfirmBtn').disabled = !any;
+}
+
+function closePruneModal() {
+  document.getElementById('pruneModal').classList.remove('active');
+  prunePreview = null;
+  pruneServerId = null;
+}
+
+async function runPrune() {
+  if (!pruneServerId) return;
+  const scope = selectedPruneScope();
+  const serverId = pruneServerId;
+  const btn = document.getElementById('pruneConfirmBtn');
+  btn.disabled = true;
+
+  if (scope.volumes && !confirm(
+    'Du har valt att ta bort oanvända volymer.\n\n' +
+    'Det kan radera data som inte går att återskapa. Är du säker?'
+  )) {
+    btn.disabled = false;
+    return;
+  }
+
+  closePruneModal();
+  showToast('Rensar Docker-systemet...', 'info');
+
+  try {
+    const res = await apiFetch(`/api/servers/${serverId}/system/prune`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(scope)
+    });
+    if (res && res.success) {
+      const bits = [];
+      if (res.containersDeleted && res.containersDeleted.length) bits.push(`${res.containersDeleted.length} containers`);
+      if (res.imagesDeleted) bits.push(`${res.imagesDeleted} image-lager`);
+      if (res.volumesDeleted && res.volumesDeleted.length) bits.push(`${res.volumesDeleted.length} volymer`);
+      if (res.networksDeleted && res.networksDeleted.length) bits.push(`${res.networksDeleted.length} nätverk`);
+      if (res.buildCacheDeleted) bits.push(`${res.buildCacheDeleted} byggcache-poster`);
+      showToast(
+        `Rensning klar: ${bits.length ? bits.join(', ') : 'inget att ta bort'}. ` +
+        `${formatSize(res.spaceReclaimed || 0)} frigjordes.`,
+        'success'
+      );
+      fetchDashboardData();
+    } else {
+      showToast((res && res.error) || 'Kunde inte utföra rensning.', 'error');
+    }
+  } catch (err) {
+    showToast('Kunde inte utföra rensning: ' + err.message, 'error');
   }
 }

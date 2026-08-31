@@ -231,6 +231,36 @@
       </main>
     </div>
 
+    <!-- PRUNE MODAL -->
+    <div id="pruneModal" class="modal-overlay">
+      <div class="modal-container" style="max-width: 620px;">
+        <div class="modal-header">
+          <h2>
+            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+            </svg>
+            Rensa system: <span id="pruneServerName" style="color: var(--accent-cyan);">--</span>
+          </h2>
+          <button class="modal-close" onclick="closePruneModal()">
+            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" />
+            </svg>
+          </button>
+        </div>
+
+        <div class="modal-body">
+          <p class="modal-hint">Välj vad som ska rensas. Inget tas bort förrän du bekräftar.</p>
+          <div id="pruneOptions" class="prune-options">Hämtar förhandsvisning...</div>
+          <div id="pruneTotal" class="prune-total"></div>
+        </div>
+
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary btn-sm" onclick="closePruneModal()">Avbryt</button>
+          <button type="button" id="pruneConfirmBtn" class="btn btn-danger btn-sm" onclick="runPrune()" disabled>Rensa</button>
+        </div>
+      </div>
+    </div>
+
     <!-- UNLOCK MODAL -->
     <div id="unlockModal" class="modal-overlay">
       <div class="modal-container" style="max-width: 440px;">
