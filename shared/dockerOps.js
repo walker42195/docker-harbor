@@ -78,8 +78,17 @@ function updateComposeFileDescription(filePath, serviceName, newDesc) {
 
 // Resolve the on-disk compose / Dockerfile path for a container purely from its
 // own labels. Callers never supply a path -- that is the whole point.
+// Labeln kan innehålla flera filer, kommaseparerade, när compose körts med
+// en override-fil. Ta den första som faktiskt finns -- det är basfilen.
+function primaryConfigFile(labels) {
+  const raw = labels['com.docker.compose.project.config_files'];
+  if (!raw) return null;
+  const paths = String(raw).split(',').map(p => p.trim()).filter(Boolean);
+  return paths.find(p => fs.existsSync(p)) || paths[0] || null;
+}
+
 function resolveContainerFile(labels, workingDirFallback, fileType) {
-  const configFile = labels['com.docker.compose.project.config_files'] || null;
+  const configFile = primaryConfigFile(labels);
   const workingDir = labels['com.docker.compose.project.working_dir'] || workingDirFallback || null;
 
   if (fileType === 'compose') {
@@ -142,7 +151,7 @@ async function listContainers(docker, withStats) {
 
     const restartPolicy = (inspectData && inspectData.HostConfig && inspectData.HostConfig.RestartPolicy && inspectData.HostConfig.RestartPolicy.Name) || 'no';
     const labels = c.Labels || {};
-    const configFile = labels['com.docker.compose.project.config_files'] || null;
+    const configFile = primaryConfigFile(labels);
     const workingDir = labels['com.docker.compose.project.working_dir'] || null;
     const composeProject = labels['com.docker.compose.project'] || null;
     const composeService = labels['com.docker.compose.service'] || null;
@@ -314,7 +323,7 @@ async function writeComposeDescription(docker, id, description) {
   const containerName = inspectData && inspectData.Name ? inspectData.Name.replace(/^\//, '') : id;
 
   const labels = (inspectData && inspectData.Config && inspectData.Config.Labels) || {};
-  const configFile = labels['com.docker.compose.project.config_files'];
+  const configFile = primaryConfigFile(labels);
   const composeService = labels['com.docker.compose.service'] || containerName;
 
   let composeUpdated = false;
@@ -458,6 +467,7 @@ function openLogStream(docker, args, { onChunk, onEnd, onError }) {
 
 module.exports = {
   execOp,
+  primaryConfigFile,
   openLogStream,
   OPS,
   listContainers,

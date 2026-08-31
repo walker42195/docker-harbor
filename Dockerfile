@@ -1,4 +1,6 @@
-FROM node:20-alpine
+# glibc-bas (inte alpine/musl): nvidia-container-toolkit injicerar
+# glibc-länkade binärer, så nvidia-smi kan inte köras på Alpine.
+FROM node:20-slim
 
 WORKDIR /app
 

@@ -1,3 +1,7 @@
+# Basfil -- fungerar på vilken värd som helst.
+# Maskinspecifika delar (NVIDIA-GPU och projektkatalog) läggs i
+# docker-compose.override.yml, som genereras av ./setup.sh och som Docker
+# Compose slår ihop med den här filen automatiskt.
 services:
   docker-harbor:
     build: .
@@ -7,23 +11,14 @@ services:
       - "6969:6969"
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
-      - ./descriptions.json:/app/descriptions.json
-      - ./servers.json:/app/servers.json
-      - /home/fredrik/Projects:/home/fredrik/Projects
-      - /usr/bin/nvidia-smi:/usr/bin/nvidia-smi:ro
-      - /usr/lib/x86_64-linux-gnu:/usr/lib/x86_64-linux-gnu:ro
+      # All muterbar data (serverregister + infotexter) i EN persistent volym.
+      # Överlever "docker compose down" och ombyggnad av imagen.
+      - harbor-data:/app/data
     env_file:
       - .env
-    environment:
-      - NVIDIA_VISIBLE_DEVICES=all
-      - NVIDIA_DRIVER_CAPABILITIES=utility,compute
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: all
-              capabilities: [gpu, utility]
     labels:
       description: "Huvudsaklig kontrollpanel för Docker-containers på servern (Live
         redigerad)."
+
+volumes:
+  harbor-data:

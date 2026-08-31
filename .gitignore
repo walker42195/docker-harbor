@@ -3,3 +3,5 @@ node_modules/
 *.log
 .DS_Store
 servers.json
+data/
+docker-compose.override.yml

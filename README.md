@@ -10,6 +10,8 @@ Varje server får en egen flik med sina containers, sina host-metrics och sitt e
 
 - [Funktioner](#funktioner)
 - [Installation](#installation)
+- [Om NVIDIA-GPU](#om-nvidia-gpu)
+- [Varför samma sökväg på båda sidor?](#varför-samma-sökväg-på-båda-sidor)
 - [Inställningar för hubben](#inställningar-för-hubben)
 - [Lägga till fler Docker-servrar](#lägga-till-fler-docker-servrar)
 - [Inställningar för agenten](#inställningar-för-agenten)
@@ -49,70 +51,45 @@ git clone https://github.com/walker42195/docker-harbor.git
 cd docker-harbor
 ```
 
-### 2. Skapa `.env`
+### 2. Kör installationsskriptet
 
 ```bash
-cp .env.example .env
+./setup.sh
 ```
 
-Öppna `.env` och sätt **minst** dessa tre:
+Skriptet känner av värdens förutsättningar och anpassar installationen:
 
-```ini
-JWT_SECRET=<slumpa en lång sträng>
-ADMIN_PASSWORD=<ditt lösenord>
-WRITE_UNLOCK_PASSWORD=<lösenord för att låsa upp skrivning>
-```
+| Kontroll | Vad som händer |
+|---|---|
+| **Docker och Compose** | Avbryter med tydligt fel om något saknas eller daemonen inte svarar. |
+| **NVIDIA-GPU** | Letar efter `nvidia-smi`, kontrollerar att `nvidia-container-toolkit` finns och **provkör faktiskt** en container med GPU. Först då slås GPU- och VRAM-mätning på. |
+| **Projektkataloger** | Läser compose-labels från de containers som redan finns på värden och härleder vilka kataloger som behöver monteras — ofta fler än en. Hittas inga containers faller den tillbaka på `~/Projects`, `~/projects`, `~/docker`, `~/Docker`. Styr själv med `HARBOR_PROJECTS_DIR=/en:/annan ./setup.sh`. |
+| **Hemligheter** | Skapar `.env` med slumpade `JWT_SECRET`, `ADMIN_PASSWORD` och `WRITE_UNLOCK_PASSWORD` (`chmod 600`). Det genererade inloggningslösenordet skrivs ut en gång. |
+| **Data** | Skapar `data/` för lokal körning. I Docker används den namngivna volymen `harbor-data`. |
 
-Slumpa hemligheter så här:
+Resultatet skrivs till `docker-compose.override.yml`, som Docker Compose slår
+ihop med `docker-compose.yml` automatiskt. Basfilen förblir generisk och
+maskinspecifika detaljer hamnar bara i overriden.
 
-```bash
-openssl rand -base64 32
-```
+Skriptet är **idempotent** — kör om det när som helst, t.ex. efter att du
+installerat en GPU eller `nvidia-container-toolkit`. En befintlig `.env` rörs
+aldrig.
 
-### 3. Skapa `servers.json`
-
-**Viktigt och lätt att missa.** Filen bind-monteras in i containern. Finns den
-inte när containern startar skapar Docker en *katalog* med det namnet, och
-serverregistret kan då aldrig sparas.
-
-```bash
-echo '{"version":1,"servers":[]}' > servers.json
-```
-
-### 4. Anpassa `docker-compose.yml`
-
-Den medföljande compose-filen är skriven för den ursprungliga värden. Gå igenom
-volymerna innan första start:
-
-```yaml
-volumes:
-  - /var/run/docker.sock:/var/run/docker.sock       # krävs
-  - ./descriptions.json:/app/descriptions.json      # infotexter
-  - ./servers.json:/app/servers.json                # serverregister
-  - /home/fredrik/Projects:/home/fredrik/Projects   # ← ändra till din projektkatalog
-  - /usr/bin/nvidia-smi:/usr/bin/nvidia-smi:ro      # ← ta bort om värden saknar NVIDIA-GPU
-  - /usr/lib/x86_64-linux-gnu:/usr/lib/x86_64-linux-gnu:ro   # ← samma
-```
-
-Projektkatalogen måste monteras på **identisk sökväg** på båda sidor. Sökvägarna
-till compose-filer kommer från Dockers egna labels och är värd-absoluta — monterar
-du dem någon annanstans hittas filerna inte.
-
-Saknar värden NVIDIA-GPU: ta bort de två `nvidia`-volymerna **och** hela
-`deploy:`-blocket, annars startar inte containern.
-
-### 5. Starta
+### 3. Starta
 
 ```bash
 docker compose up -d --build
 ```
 
-Gränssnittet nås på `http://localhost:6969` (eller din publicerade domän).
+Gränssnittet nås på `http://localhost:6969`. Logga in med `admin` och lösenordet
+`setup.sh` skrev ut (det står också i `.env`).
 
-### 6. Logga in
+### Om du hellre gör det för hand
 
-Användarnamnet och lösenordet är de du satte i `.env` (`ADMIN_USER` /
-`ADMIN_PASSWORD`). Standard är `admin` / `admin123` — **byt dessa**.
+```bash
+cp .env.example .env          # fyll i JWT_SECRET, ADMIN_PASSWORD, WRITE_UNLOCK_PASSWORD
+docker compose up -d --build  # utan override: ingen GPU, ingen compose-filläsning
+```
 
 ### Köra utan Docker
 
@@ -120,6 +97,103 @@ Användarnamnet och lösenordet är de du satte i `.env` (`ADMIN_USER` /
 npm install
 npm start          # eller: npm run dev  (hot-reload)
 ```
+
+---
+
+## Om NVIDIA-GPU
+
+GPU- och VRAM-korten visas bara när mätningen faktiskt fungerar. Tre saker
+måste stämma:
+
+1. **En GPU på värden** — `nvidia-smi -L` ska svara.
+2. **`nvidia-container-toolkit`** — utan den kan Docker inte skicka in kortet
+   i en container. `setup.sh` provkör detta på riktigt i stället för att gissa.
+3. **En glibc-baserad image** — imagen bygger på `node:20-slim`, inte
+   `node:20-alpine`. Toolkit:en injicerar glibc-länkade binärer, så `nvidia-smi`
+   kan inte köras på Alpine (musl).
+
+Bind-montera **inte** `nvidia-smi` eller drivrutinsbiblioteken för hand.
+Sökvägarna skiljer sig mellan distributioner — på Debian ligger de i
+`/usr/lib/x86_64-linux-gnu`, på Arch i `/usr/lib` — och en manuell mount skuggar
+dessutom de filer toolkit:en själv injicerar, vilket får `nvidia-smi` att sluta
+fungera. Rätt sätt är `NVIDIA_DRIVER_CAPABILITIES=utility` plus en
+device-reservation, vilket `setup.sh` genererar åt dig.
+
+Saknas GPU fungerar allt annat precis som vanligt — korten döljs bara.
+
+Har en **annan** container på värden CUDA installerat kan Docker Harbor ändå
+läsa GPU-siffror genom den, som reserv.
+
+---
+
+## Varför samma sökväg på båda sidor?
+
+Det här gäller **bara** funktionen som visar `docker-compose.yml` och
+`Dockerfile` i gränssnittet. Struntar du i den kan du hoppa över hela avsnittet
+— allt annat fungerar ändå.
+
+När du startar något med Docker Compose sparar Docker sökvägen till compose-filen
+som en label på containern:
+
+```bash
+$ docker inspect n8n --format '{{index .Config.Labels "com.docker.compose.project.config_files"}}'
+/home/fredrik/Docker/n8n/docker-compose.yml
+```
+
+Den sökvägen är **värdens** sökväg. Docker Harbor kör själv i en container, och
+där finns inte `/home/fredrik/Docker/n8n/` om vi inte monterar in den.
+
+Säg att vi monterar den på en annan plats:
+
+```yaml
+- /home/fredrik/Projects:/mnt/projekt        # ← annan sökväg inuti
+```
+
+Då händer det här:
+
+```
+Label säger:        /home/fredrik/Projects/minapp/docker-compose.yml
+Containern har:     /mnt/projekt/minapp/docker-compose.yml
+Harbor öppnar:      /home/fredrik/Projects/minapp/docker-compose.yml  →  finns inte
+```
+
+Filen *finns* i containern, men på en annan adress än den Docker uppgav. Harbor
+skulle behöva räkna om varje sökväg, och kan inte veta hur.
+
+Monterar vi den i stället på samma sökväg:
+
+```yaml
+- /home/fredrik/Projects:/home/fredrik/Projects   # ← identisk
+```
+
+```
+Label säger:        /home/fredrik/Projects/minapp/docker-compose.yml
+Containern har:     /home/fredrik/Projects/minapp/docker-compose.yml
+Harbor öppnar:      /home/fredrik/Projects/minapp/docker-compose.yml  →  träff
+```
+
+Sökvägarna blir identiska och allt stämmer utan omräkning. Därför ser raden
+konstig ut med samma sökväg två gånger — det är hela poängen.
+
+`setup.sh` sätter detta åt dig. Den gissar inte: den läser compose-labels från
+de containers som redan finns på värden och monterar precis de rötter som
+behövs. Har du filer i både `~/Projects` och `~/Docker` monteras båda.
+
+Vill du styra det själv (flera kataloger separeras med kolon):
+
+```bash
+HARBOR_PROJECTS_DIR=/srv/docker:/opt/stacks ./setup.sh
+```
+
+Lägger du senare till containers i en helt ny katalog: kör om `setup.sh` och
+`docker compose up -d`.
+
+Samma sak gäller agenten på en fjärrserver: ska du kunna läsa compose-filer
+därifrån monteras den serverns katalog på sin egen sökväg, i den serverns
+`docker-compose.yml`.
+
+**Containers som inte startats via Compose** har ingen sådan label alls. För dem
+visas "Fristående container" och Compose-knappen är avstängd — det är väntat.
 
 ---
 
@@ -139,16 +213,38 @@ Alla sätts i `.env` i repots rot.
 | `SNAPSHOT_INTERVAL_MS` | `5000` | Hur ofta varje server rapporterar containers och host-metrics. |
 | `DESCRIPTIONS_CROSS_SERVER_FALLBACK` | `false` | Låt en container på en ny server ärva infotexten från en lokal container med samma namn. Av som standard för att undvika felmärkningar. |
 
-### Filer som innehåller data
+### Var data sparas
+
+All muterbar data ligger i **en** katalog, `/app/data` i containern, monterad
+som den namngivna volymen `harbor-data`:
+
+| Fil i `data/` | Innehåll |
+|---|---|
+| `servers.json` | Serverregistret och token-**hashar** för anslutna agenter. |
+| `descriptions.json` | Infotexter per server och container. |
+
+Volymen överlever `docker compose down`, `up --build` och ombyggnad av imagen.
+Första gången containern startar kopieras eventuella `servers.json` och
+`descriptions.json` från repots rot in i volymen automatiskt, så en äldre
+installation migreras utan handpåläggning.
+
+Enskilda filer bind-monteras medvetet **inte**. Finns en sådan fil inte på
+värden när containern startar skapar Docker en *katalog* med samma namn, och då
+kan ingenting någonsin sparas.
 
 | Fil | Innehåll | I git? |
 |---|---|---|
-| `.env` | Lösenord och hemligheter | Nej (gitignorerad) |
-| `servers.json` | Serverregister och token-**hashar** | Nej (gitignorerad) |
-| `descriptions.json` | Infotexter per server och container | Ja |
+| `.env` | Lösenord och hemligheter | Nej |
+| `docker-compose.override.yml` | Maskinspecifik config från `setup.sh` | Nej |
+| `data/` | Serverregister och infotexter | Nej |
 
-Ta backup på `.env` och `servers.json`. Tappar du `servers.json` måste alla
-agenter enrollas om.
+Backup:
+
+```bash
+docker run --rm -v docker-harbor_harbor-data:/data -v "$PWD":/backup alpine \
+  tar czf /backup/harbor-data.tar.gz -C /data .
+cp .env harbor-env.bak
+```
 
 ---
 
@@ -282,8 +378,8 @@ cd /opt/harbor-agent && docker compose up -d
 |---|---|---|
 | `/var/run/docker.sock:/var/run/docker.sock` | Ja | Åtkomst till Docker. |
 | `harbor-agent-data:/data` | Ja | Sparar den permanenta token. Utan den måste agenten enrollas om vid varje omstart. |
-| `<projektkatalog>:<samma sökväg>` | Nej | Krävs för att läsa och redigera compose-filer. Måste vara identisk sökväg på båda sidor. |
-| `/usr/bin/nvidia-smi:/usr/bin/nvidia-smi:ro` | Nej | Ger GPU- och VRAM-siffror. Bara på värdar med NVIDIA-GPU. |
+| `<projektkatalog>:<samma sökväg>` | Nej | Krävs för att läsa och redigera compose-filer. Identisk sökväg på båda sidor — [varför?](#varför-samma-sökväg-på-båda-sidor) |
+| GPU-konfiguration | Nej | Läggs till automatiskt av installationsskriptet när det hittar en GPU **och** verifierat att den kan skickas in i en container. Ingen manuell mount — se [Om NVIDIA-GPU](#om-nvidia-gpu). |
 
 Se `agent/README.md` och `agent/docker-compose.example.yml` för mer.
 
@@ -343,6 +439,7 @@ fungerar ändå.
 ```bash
 cd docker-harbor
 git pull
+./setup.sh                 # känner av värden på nytt; rör inte din .env
 docker compose up -d --build
 ```
 

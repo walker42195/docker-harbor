@@ -1,6 +1,8 @@
 # Build context must be the REPOSITORY ROOT so shared/ is reachable:
 #   docker build -f agent/Dockerfile -t docker-harbor-agent:latest .
-FROM node:20-alpine
+# glibc-bas (inte alpine/musl): nvidia-container-toolkit injicerar
+# glibc-länkade binärer, så nvidia-smi kan inte köras på Alpine.
+FROM node:20-slim
 
 WORKDIR /app
 
