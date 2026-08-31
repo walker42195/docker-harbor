@@ -134,7 +134,7 @@ else
   for d in $(detect_roots); do
     # Montera aldrig in hela / eller /home -- för brett.
     case "$d" in
-      /|/home|/root|/usr|/etc|/var) warn "hoppar över $d (för bred sökväg)"; continue ;;
+      /|/home|/root|/usr|/etc|/var|/opt) warn "hoppar över $d (för bred sökväg)"; continue ;;
     esac
     if [ -d "$d" ]; then
       PROJECT_ROOTS="$PROJECT_ROOTS $d"

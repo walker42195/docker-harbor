@@ -44,6 +44,12 @@ let lastPong = 0;
 // enrollment-koden -- annars sitter agenten fast for alltid med ett token som
 // hubben inte langre kanner igen (t.ex. efter att servern registrerats om).
 let forceEnroll = false;
+// Raknar anslutningsforsok utan lyckad handskakning. Behovs eftersom hubben
+// blockerar IP:n efter fem misslyckade forsok och da svarar 429 redan vid
+// upgrade -- vi far aldrig nagot 4403 att reagera pa, och en agent med ett
+// forbrukat token skulle annars aldrig hitta tillbaka.
+let failedAttempts = 0;
+let lastWsError = '';
 let backoff = 1000;
 let seq = 0;
 const streams = new Map(); // reqId -> stream handle
@@ -123,6 +129,7 @@ function connect() {
 
     if (msg.t === FRAME.WELCOME) {
       backoff = 1000;
+      failedAttempts = 0;
       if (msg.token) storeToken(msg.token);
       forceEnroll = false;
       console.log(`[agent] ansluten till hubben (hub ${msg.hubVersion}), rapporterar var ${msg.snapshotIntervalMs || CFG.snapshotMs} ms`);
@@ -162,6 +169,23 @@ function connect() {
   ws.on('close', (code, reason) => {
     teardown();
     const text = reason ? reason.toString() : '';
+
+    failedAttempts += 1;
+    // Efter tre misslyckade forsok i rad: om vi har en enrollment-kod men
+    // anvander ett sparat token, prova koden i stallet. Tacker aven fallet
+    // dar hubben svarar 429 och vi aldrig ser ett 4403.
+    if (!forceEnroll && CFG.enrollCode && token && failedAttempts >= 3) {
+      console.warn(`[agent] ${failedAttempts} misslyckade försök. Kastar sparat token och provar enrollment-koden.`);
+      forceEnroll = true;
+      try { fs.unlinkSync(CFG.tokenFile); } catch (err) {}
+    }
+
+    // Bara nar hubben faktiskt svarat 429 -- inte vid natverksfel.
+    if (/\b429\b/.test(lastWsError) && failedAttempts === 1) {
+      console.warn('[agent] hubben har blockerat den här serverns IP efter tidigare' +
+        ' misslyckade försök (429). Den släpps efter 10 minuter, eller när hubben startas om.');
+    }
+
     if (code === 4403) {
       if (!forceEnroll && CFG.enrollCode && token) {
         // Sparad token underkand men vi har en enrollment-kod: kasta token och
@@ -181,7 +205,8 @@ function connect() {
 
   ws.on('error', (err) => {
     // 'close' always follows, so reconnection is handled there.
-    console.error('[agent] ws-fel:', err.message);
+    lastWsError = err.message || '';
+    console.error('[agent] ws-fel:', lastWsError);
   });
 }
 

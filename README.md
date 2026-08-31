@@ -603,7 +603,8 @@ cd /opt/harbor-agent && docker compose logs -f harbor-agent
 | `ansluten till hubben` | Allt fungerar. |
 | `hubben nekade åtkomst (4403 ...)` | Fel server-ID, eller servern finns inte i hubben. Kontrollera hubbens logg — den skriver ut orsaken för varje avvisad agent. |
 | `hubben nekade det sparade token` | Servern registrerades om i hubben. Agenten kastar sitt gamla token och enrollar om automatiskt med koden i `.env`. |
-| `Unexpected server response: 429` | Hubben har blockerat serverns IP i 10 minuter efter fem misslyckade försök. Vänta, eller starta om hubben för att nollställa. Åtgärda orsaken först — se hubbens logg. |
+| `Unexpected server response: 429` | Hubben har blockerat serverns IP i 10 minuter efter fem misslyckade försök. Vänta, eller starta om hubben för att nollställa. **Åtgärda orsaken först** — hubbens logg visar den: `docker logs docker-harbor 2>&1 \| grep agent-hub`. Vanligast är `okänd server` (servern borttagen ur registret) eller `ogiltig eller förbrukad enrollment-kod`. |
+| `N misslyckade försök. Kastar sparat token` | Agenten återhämtar sig själv: den slänger ett token hubben inte längre accepterar och enrollar om med koden i `.env`. Normalt efter att servern registrerats om. |
 | `socket hang up` / `frånkopplad (1006)` | Ingen WebSocket-handskakning kom till stånd. Med en hubb äldre än denna version är det oftast IP-blockeringen, som då revs tyst; uppdatera hubben så svarar den 429 med förklaring i loggen. |
 | `frånkopplad (...), återansluter om ...` | Normalt vid nätverksavbrott. Agenten backar av upp till 30 sekunder. |
 | `KUNDE INTE spara token` | `/data`-volymen saknas eller är skrivskyddad. |
