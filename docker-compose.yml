@@ -8,6 +8,7 @@ services:
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - ./descriptions.json:/app/descriptions.json
+      - ./servers.json:/app/servers.json
       - /home/fredrik/Projects:/home/fredrik/Projects
       - /usr/bin/nvidia-smi:/usr/bin/nvidia-smi:ro
       - /usr/lib/x86_64-linux-gnu:/usr/lib/x86_64-linux-gnu:ro

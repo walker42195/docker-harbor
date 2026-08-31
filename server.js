@@ -1,26 +1,38 @@
 const express = require('express');
 const http = require('http');
 const path = require('path');
-const Docker = require('dockerode');
 const jwt = require('jsonwebtoken');
-const bcrypt = require('bcryptjs');
 const cookieParser = require('cookie-parser');
 const cors = require('cors');
 const { WebSocketServer } = require('ws');
 require('dotenv').config();
 
+const { Registry } = require('./lib/registry');
+const { AgentHub } = require('./lib/agentHub');
+const { UnlockManager } = require('./lib/unlock');
+const descriptions = require('./lib/descriptions');
+const { createMiddleware } = require('./lib/routes/middleware');
+const { createContainersRouter } = require('./lib/routes/containers');
+const { createServersRouter, createInstallRoute } = require('./lib/routes/servers');
+const { createLogsHandler } = require('./lib/logsWs');
+
 const app = express();
 const server = http.createServer(app);
-const wss = new WebSocketServer({ server, path: '/ws/logs' });
 
 const PORT = process.env.PORT || 6969;
 const JWT_SECRET = process.env.JWT_SECRET || 'docker-harbor-super-secret-key-2026';
 const ADMIN_USER = process.env.ADMIN_USER || 'admin';
 // Default password is 'admin123' if not specified in .env
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'admin123';
+const SNAPSHOT_INTERVAL_MS = parseInt(process.env.SNAPSHOT_INTERVAL_MS, 10) || 5000;
+const AGENT_IMAGE = process.env.HARBOR_AGENT_IMAGE || 'docker-harbor-agent:latest';
+const HUB_WS_URL = process.env.HARBOR_HUB_WS_URL || null;
 
-// Initialize Docker client
-const docker = new Docker({ socketPath: '/var/run/docker.sock' });
+// Server registry, agent hub (owns the local Docker socket transport too) and
+// the hub-side write-unlock manager.
+const registry = new Registry();
+const hub = new AgentHub({ registry, snapshotIntervalMs: SNAPSHOT_INTERVAL_MS });
+const unlock = new UnlockManager(process.env.WRITE_UNLOCK_PASSWORD);
 
 // Middleware
 app.use(cors());
@@ -31,107 +43,8 @@ app.use(cookieParser());
 // Static Files
 app.use(express.static(path.join(__dirname, 'public')));
 
-const fs = require('fs');
-const YAML = require('yaml');
-const DESCRIPTIONS_FILE = path.join(__dirname, 'descriptions.json');
-
-function loadCustomDescriptions() {
-  try {
-    if (fs.existsSync(DESCRIPTIONS_FILE)) {
-      const raw = fs.readFileSync(DESCRIPTIONS_FILE, 'utf8');
-      return JSON.parse(raw);
-    }
-  } catch (err) {
-    console.error('Error reading descriptions.json:', err.message);
-  }
-  return {};
-}
-
-function saveCustomDescriptions(descriptions) {
-  try {
-    fs.writeFileSync(DESCRIPTIONS_FILE, JSON.stringify(descriptions, null, 2), 'utf8');
-  } catch (err) {
-    console.error('Error writing descriptions.json:', err.message);
-  }
-}
-
-function updateComposeFileDescription(filePath, serviceName, newDesc) {
-  try {
-    if (!filePath || !fs.existsSync(filePath)) return false;
-
-    const yamlText = fs.readFileSync(filePath, 'utf8');
-    const doc = YAML.parseDocument(yamlText);
-    const services = doc.get('services');
-    if (!services) return false;
-
-    // Try target serviceName, or fallback to first service in compose file if only 1 service
-    let service = doc.getIn(['services', serviceName]);
-    if (!service && services.items && services.items.length > 0) {
-      // Find service where container_name matches or default to first
-      for (const item of services.items) {
-        if (item.value && item.value.get && item.value.get('container_name') === serviceName) {
-          service = item.value;
-          break;
-        }
-      }
-      if (!service) service = services.items[0].value;
-    }
-
-    if (!service) return false;
-
-    let labels = service.get('labels');
-    if (!labels) {
-      if (newDesc) {
-        service.set('labels', { description: newDesc });
-      }
-    } else if (YAML.isSeq(labels)) {
-      let found = false;
-      for (let i = 0; i < labels.items.length; i++) {
-        const item = String(labels.items[i]);
-        if (item.startsWith('description=') || item.startsWith('harbor.description=')) {
-          if (newDesc) {
-            labels.items[i] = new YAML.Scalar(`description=${newDesc}`);
-          } else {
-            labels.items.splice(i, 1);
-          }
-          found = true;
-          break;
-        }
-      }
-      if (!found && newDesc) {
-        labels.items.push(new YAML.Scalar(`description=${newDesc}`));
-      }
-    } else {
-      if (newDesc) {
-        service.setIn(['labels', 'description'], newDesc);
-      } else {
-        service.deleteIn(['labels', 'description']);
-      }
-    }
-
-    fs.writeFileSync(filePath, doc.toString(), 'utf8');
-    return true;
-  } catch (err) {
-    console.error(`Error updating compose file ${filePath}:`, err.message);
-    return false;
-  }
-}
-
-// Authentication Middleware
-const requireAuth = (req, res, next) => {
-  const token = req.cookies.docker_harbor_token || (req.headers.authorization && req.headers.authorization.split(' ')[1]);
-  if (!token) {
-    return res.status(401).json({ success: false, error: 'Ej behörig. Vänligen logga in.' });
-  }
-
-  try {
-    const decoded = jwt.verify(token, JWT_SECRET);
-    req.user = decoded;
-    next();
-  } catch (err) {
-    return res.status(401).json({ success: false, error: 'Ogiltig eller utgången session.' });
-  }
-};
+const mw = createMiddleware({ hub, unlock, jwtSecret: JWT_SECRET });
+const { requireAuth } = mw;
 
 // ======================= AUTH ROUTES =======================
 
@@ -169,665 +82,107 @@ app.post('/api/auth/logout', (req, res) => {
   res.json({ success: true, message: 'Utloggad.' });
 });
 
-// ======================= DOCKER ROUTES =======================
+// ======================= AGENT INSTALLATION =======================
 
-// Host System Info & Stats
-app.get('/api/system/info', requireAuth, async (req, res) => {
-  try {
-    const info = await docker.info();
-    const version = await docker.version();
-    const containers = await docker.listContainers({ all: true });
+// Unauthenticated by necessity -- the remote host is not logged in. The code in
+// the URL is high-entropy, expires after 30 minutes and is single-use.
+app.get('/install/:code', createInstallRoute({
+  hub,
+  agentImage: AGENT_IMAGE,
+  hubWsUrlOverride: HUB_WS_URL
+}));
 
-    const running = containers.filter(c => c.State === 'running').length;
-    const stopped = containers.filter(c => c.State === 'exited' || c.State === 'created').length;
-    const paused = containers.filter(c => c.State === 'paused').length;
+// ======================= SERVER + CONTAINER ROUTES =======================
 
-    res.json({
-      success: true,
-      data: {
-        serverVersion: version.Version,
-        os: info.OperatingSystem,
-        architecture: info.Architecture,
-        ncpu: info.NCPU,
-        memTotal: info.MemTotal,
-        containersTotal: containers.length,
-        containersRunning: running,
-        containersStopped: stopped,
-        containersPaused: paused,
-        imagesTotal: info.Images
-      }
-    });
-  } catch (err) {
-    console.error('Docker system info error:', err);
-    res.status(500).json({ success: false, error: 'Kunde inte hämta systeminformation från Docker: ' + err.message });
+app.use('/api/servers', createServersRouter({
+  mw, hub, unlock, agentImage: AGENT_IMAGE, hubWsUrlOverride: HUB_WS_URL
+}));
+
+const containersRouter = createContainersRouter({ mw });
+app.use('/api/servers/:serverId/containers', containersRouter);
+
+// Aggregate view across every enabled server, served entirely from the
+// snapshot cache. This is what the dashboard polls.
+app.get('/api/containers', requireAuth, (req, res) => {
+  const only = req.query.server || null;
+  const db = descriptions.load();
+  const containers = [];
+  const hostMetricsByServer = {};
+
+  for (const entry of registry.list()) {
+    if (!entry.enabled) continue;
+    if (only && entry.id !== only) continue;
+
+    const transport = hub.getTransport(entry.id);
+    const snap = transport ? transport.getSnapshot() : null;
+    if (!snap) continue;
+
+    hostMetricsByServer[entry.id] = snap.hostMetrics;
+    for (const c of descriptions.applyTo(db, entry.id, snap.containers)) {
+      containers.push({
+        ...c,
+        serverId: entry.id,
+        serverName: entry.name,
+        serverColor: entry.color,
+        serverPublicHost: entry.publicHost
+      });
+    }
   }
-});
 
-const os = require('os');
-let prevHostCpuTimes = null;
-
-function getHostCpuPercent() {
-  const cpus = os.cpus();
-  let user = 0, nice = 0, sys = 0, idle = 0, irq = 0;
-  cpus.forEach(cpu => {
-    user += cpu.times.user;
-    nice += cpu.times.nice;
-    sys += cpu.times.sys;
-    idle += cpu.times.idle;
-    irq += cpu.times.irq;
+  const localSnap = hub.getTransport('local') ? hub.getTransport('local').getSnapshot() : null;
+  res.json({
+    success: true,
+    containers,
+    hostMetricsByServer,
+    // Kept for backwards compatibility with clients that predate multi-server.
+    hostMetrics: localSnap ? localSnap.hostMetrics : null
   });
-
-  const total = user + nice + sys + idle + irq;
-  if (!prevHostCpuTimes) {
-    prevHostCpuTimes = { total, idle };
-    return '0.0%';
-  }
-
-  const totalDelta = total - prevHostCpuTimes.total;
-  const idleDelta = idle - prevHostCpuTimes.idle;
-  prevHostCpuTimes = { total, idle };
-
-  if (totalDelta <= 0) return '0.0%';
-  const usagePercent = ((1 - idleDelta / totalDelta) * 100).toFixed(1);
-  return usagePercent + '%';
-}
-
-function getHostRamMetrics() {
-  const total = os.totalmem();
-  const free = os.freemem();
-  const used = total - free;
-  const totalGb = (total / (1024 * 1024 * 1024)).toFixed(1);
-  const usedGb = (used / (1024 * 1024 * 1024)).toFixed(1);
-  const percent = ((used / total) * 100).toFixed(1);
-  return `${usedGb} GiB / ${totalGb} GiB (${percent}%)`;
-}
-
-async function getHostGpuMetrics(runningContainers) {
-  for (const c of runningContainers) {
-    try {
-      const container = docker.getContainer(c.Id);
-      const exec = await container.exec({
-        Cmd: ['nvidia-smi', '--query-gpu=utilization.gpu,memory.used,memory.total', '--format=csv,noheader,nounits'],
-        AttachStdout: true,
-        AttachStderr: true
-      });
-      const stream = await exec.start();
-      const output = await new Promise((resolve) => {
-        let buf = '';
-        stream.on('data', chunk => buf += chunk.toString());
-        stream.on('end', () => resolve(buf));
-        setTimeout(() => resolve(''), 1500);
-      });
-
-      const clean = output.replace(/[^\x20-\x7E]/g, '').trim();
-      if (clean && clean.includes(',')) {
-        const parts = clean.split(',').map(s => s.trim());
-        if (parts.length >= 3) {
-          const gpuUtil = parseInt(parts[0], 10) || 0;
-          const memUsed = parseFloat(parts[1]) || 0;
-          const memTotal = parseFloat(parts[2]) || 0;
-
-          const usedGb = (memUsed / 1024).toFixed(1);
-          const totalGb = (memTotal / 1024).toFixed(1);
-          const vramPercent = memTotal > 0 ? ((memUsed / memTotal) * 100).toFixed(1) : '0';
-
-          return {
-            gpuPercent: `${gpuUtil}%`,
-            vram: `${usedGb} GiB / ${totalGb} GiB (${vramPercent}%)`
-          };
-        }
-      }
-    } catch (e) {}
-  }
-  return { gpuPercent: '--', vram: '--' };
-}
-
-function formatBytes(bytes) {
-  if (!bytes || bytes <= 0) return '0 B';
-  const k = 1024;
-  const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
-  const i = Math.floor(Math.log(bytes) / Math.log(k));
-  return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
-}
-
-function formatMibGib(bytes) {
-  if (!bytes || bytes <= 0) return '0 MiB';
-  const mib = bytes / (1024 * 1024);
-  if (mib >= 1024) {
-    return (mib / 1024).toFixed(2) + ' GiB';
-  }
-  return mib.toFixed(1) + ' MiB';
-}
-
-function calculateContainerMetrics(stats) {
-  if (!stats || !stats.cpu_stats) {
-    return { cpuPercent: '--', memory: '--', netIo: '--' };
-  }
-
-  let cpuPercent = 0.0;
-  const cpuDelta = (stats.cpu_stats.cpu_usage ? stats.cpu_stats.cpu_usage.total_usage : 0) -
-                   (stats.precpu_stats && stats.precpu_stats.cpu_usage ? stats.precpu_stats.cpu_usage.total_usage : 0);
-  const systemDelta = (stats.cpu_stats.system_cpu_usage || 0) -
-                      (stats.precpu_stats ? stats.precpu_stats.system_cpu_usage || 0 : 0);
-  const numCpus = (stats.cpu_stats.online_cpus) || 
-                  (stats.cpu_stats.cpu_usage && stats.cpu_stats.cpu_usage.percpu_usage ? stats.cpu_stats.cpu_usage.percpu_usage.length : 1);
-
-  if (systemDelta > 0 && cpuDelta > 0) {
-    cpuPercent = (cpuDelta / systemDelta) * numCpus * 100.0;
-  }
-
-  const usage = stats.memory_stats ? (stats.memory_stats.usage - (stats.memory_stats.stats ? (stats.memory_stats.stats.cache || stats.memory_stats.stats.inactive_file || 0) : 0)) : 0;
-  const limit = stats.memory_stats ? stats.memory_stats.limit : 0;
-
-  const usageStr = formatMibGib(usage);
-  let memFormatted = usageStr;
-  if (limit && limit > 0 && limit < 1e15) {
-    memFormatted = `${usageStr} / ${formatMibGib(limit)}`;
-  }
-
-  let rx = 0;
-  let tx = 0;
-  if (stats.networks) {
-    Object.values(stats.networks).forEach(n => {
-      rx += n.rx_bytes || 0;
-      tx += n.tx_bytes || 0;
-    });
-  }
-  const netFormatted = `↓ ${formatBytes(rx)} / ↑ ${formatBytes(tx)}`;
-
-  return {
-    cpuPercent: cpuPercent.toFixed(1) + '%',
-    memory: memFormatted,
-    netIo: netFormatted
-  };
-}
-
-// Get Containers List
-app.get('/api/containers', requireAuth, async (req, res) => {
-  try {
-    const containers = await docker.listContainers({ all: true });
-    const customDescriptions = loadCustomDescriptions();
-
-    // Fetch inspect details and stats in parallel
-    const inspectsAndStats = await Promise.all(
-      containers.map(async c => {
-        const inspect = await docker.getContainer(c.Id).inspect().catch(() => null);
-        let stats = null;
-        if (c.State === 'running') {
-          stats = await docker.getContainer(c.Id).stats({ stream: false }).catch(() => null);
-        }
-        return { inspect, stats };
-      })
-    );
-
-    // Format container objects nicely for UI
-    const formatted = containers.map((c, idx) => {
-      const { inspect: inspectData, stats } = inspectsAndStats[idx];
-      const metrics = (c.State === 'running' && stats)
-        ? calculateContainerMetrics(stats)
-        : { cpuPercent: '--', memory: '--', netIo: '--' };
-
-      const restartPolicy = (inspectData && inspectData.HostConfig && inspectData.HostConfig.RestartPolicy && inspectData.HostConfig.RestartPolicy.Name) || 'no';
-      const configFile = (c.Labels && c.Labels['com.docker.compose.project.config_files']) || null;
-      const workingDir = (c.Labels && c.Labels['com.docker.compose.project.working_dir']) || null;
-      const composeProject = (c.Labels && c.Labels['com.docker.compose.project']) || null;
-      const composeService = (c.Labels && c.Labels['com.docker.compose.service']) || null;
-
-      const containerName = c.Names && c.Names[0] ? c.Names[0].replace(/^\//, '') : '';
-      const customDesc = customDescriptions[containerName] || customDescriptions[c.Id] || customDescriptions[c.Id.substring(0, 12)];
-
-      const composeLabelDesc = (c.Labels && (
-        c.Labels['description'] ||
-        c.Labels['harbor.description'] ||
-        c.Labels['com.docker.harbor.description'] ||
-        c.Labels['org.opencontainers.image.description'] ||
-        c.Labels['info']
-      )) || null;
-
-      const description = (customDesc !== undefined && customDesc !== null) ? customDesc : composeLabelDesc;
-
-      let dockerfileFile = null;
-      if (workingDir) {
-        const potentialDockerfile = path.join(workingDir, 'Dockerfile');
-        if (fs.existsSync(potentialDockerfile)) {
-          dockerfileFile = potentialDockerfile;
-        }
-      } else if (configFile) {
-        const dir = path.dirname(configFile);
-        const potentialDockerfile = path.join(dir, 'Dockerfile');
-        if (fs.existsSync(potentialDockerfile)) {
-          dockerfileFile = potentialDockerfile;
-        }
-      }
-
-      const hasCompose = !!(configFile && fs.existsSync(configFile));
-      const hasDockerfile = !!dockerfileFile;
-
-      return {
-        id: c.Id,
-        shortId: c.Id.substring(0, 12),
-        names: c.Names.map(n => n.replace(/^\//, '')),
-        image: c.Image,
-        imageId: c.ImageID,
-        command: c.Command,
-        created: c.Created,
-        state: c.State,
-        status: c.Status,
-        ports: c.Ports.map(p => ({
-          IP: p.IP,
-          PrivatePort: p.PrivatePort,
-          PublicPort: p.PublicPort,
-          Type: p.Type
-        })),
-        labels: c.Labels,
-        mounts: c.Mounts,
-        restartPolicy,
-        configFile,
-        workingDir,
-        composeProject,
-        composeService,
-        description,
-        hasCompose,
-        hasDockerfile,
-        metrics
-      };
-    });
-
-    const hostCpu = getHostCpuPercent();
-    const hostRam = getHostRamMetrics();
-    const runningContainers = containers.filter(c => c.State === 'running');
-    const hostGpu = await getHostGpuMetrics(runningContainers);
-
-    const hostMetrics = {
-      cpuPercent: hostCpu,
-      ram: hostRam,
-      gpuPercent: hostGpu.gpuPercent,
-      vram: hostGpu.vram
-    };
-
-    res.json({ success: true, containers: formatted, hostMetrics });
-  } catch (err) {
-    console.error('List containers error:', err);
-    res.status(500).json({ success: false, error: 'Kunde inte lista containers: ' + err.message });
-  }
 });
 
-// Read Container Configuration File (docker-compose.yml or Dockerfile)
-app.get('/api/containers/:id/file', requireAuth, async (req, res) => {
-  const fileType = req.query.type; // 'compose' or 'dockerfile'
-  const containerId = req.params.id;
+// Legacy unscoped routes -- resolveServer defaults these to the local server.
+app.use('/api/containers', containersRouter);
 
-  try {
-    const container = docker.getContainer(containerId);
-    const inspectData = await container.inspect().catch(() => null);
-    if (!inspectData) {
-      return res.status(404).json({ success: false, error: 'Container hittades inte.' });
-    }
-
-    const labels = inspectData.Config.Labels || {};
-    const configFile = labels['com.docker.compose.project.config_files'] || null;
-    const workingDir = labels['com.docker.compose.project.working_dir'] || (inspectData.Config.WorkingDir || null);
-
-    let targetPath = null;
-
-    if (fileType === 'compose') {
-      if (configFile && fs.existsSync(configFile)) {
-        targetPath = configFile;
-      } else if (workingDir) {
-        const altCompose = path.join(workingDir, 'docker-compose.yml');
-        const altComposeYaml = path.join(workingDir, 'docker-compose.yaml');
-        if (fs.existsSync(altCompose)) targetPath = altCompose;
-        else if (fs.existsSync(altComposeYaml)) targetPath = altComposeYaml;
-      }
-    } else if (fileType === 'dockerfile') {
-      if (workingDir) {
-        const df = path.join(workingDir, 'Dockerfile');
-        if (fs.existsSync(df)) targetPath = df;
-      }
-      if (!targetPath && configFile) {
-        const dir = path.dirname(configFile);
-        const df = path.join(dir, 'Dockerfile');
-        if (fs.existsSync(df)) targetPath = df;
-      }
-    }
-
-    if (!targetPath || !fs.existsSync(targetPath)) {
-      return res.status(404).json({
-        success: false,
-        error: `Ingen ${fileType === 'compose' ? 'docker-compose.yml' : 'Dockerfile'} hittades för denna container.`
-      });
-    }
-
-    const content = fs.readFileSync(targetPath, 'utf8');
-    res.json({
-      success: true,
-      fileType,
-      fileName: path.basename(targetPath),
-      filePath: targetPath,
-      content
-    });
-  } catch (err) {
-    console.error('Read container file error:', err);
-    res.status(500).json({ success: false, error: 'Kunde inte läsa filen: ' + err.message });
+// Legacy: the local server's Docker engine info.
+app.get('/api/system/info', requireAuth, (req, res) => {
+  const snap = hub.getTransport('local').getSnapshot();
+  if (!snap) {
+    return res.status(503).json({ success: false, error: 'Väntar på data från Docker.' });
   }
+  res.json({ success: true, data: snap.info });
 });
 
-// Update Container Description
-app.post('/api/containers/:id/description', requireAuth, async (req, res) => {
-  const { description } = req.body;
-  const containerId = req.params.id;
-
-  try {
-    const container = docker.getContainer(containerId);
-    const inspectData = await container.inspect().catch(() => null);
-    const containerName = inspectData && inspectData.Name ? inspectData.Name.replace(/^\//, '') : containerId;
-
-    const descriptions = loadCustomDescriptions();
-    const cleanDesc = (description || '').trim();
-
-    if (cleanDesc) {
-      descriptions[containerName] = cleanDesc;
-    } else {
-      delete descriptions[containerName];
-      delete descriptions[containerId];
-    }
-
-    saveCustomDescriptions(descriptions);
-
-    // Update docker-compose.yml on host disk if container was started from a compose file
-    const labels = (inspectData && inspectData.Config && inspectData.Config.Labels) || {};
-    const configFile = labels['com.docker.compose.project.config_files'];
-    const composeService = labels['com.docker.compose.service'] || containerName;
-
-    let composeUpdated = false;
-    if (configFile) {
-      composeUpdated = updateComposeFileDescription(configFile, composeService, cleanDesc);
-    }
-
-    res.json({
-      success: true,
-      message: composeUpdated 
-        ? 'Infotexten sparades i både docker-compose.yml och systemet.'
-        : 'Infotexten sparades i systemet.',
-      description: descriptions[containerName] || null,
-      composeUpdated
-    });
-  } catch (err) {
-    console.error('Update description error:', err);
-    res.status(500).json({ success: false, error: 'Kunde inte spara infotext: ' + err.message });
-  }
-});
-
-// Update Container Restart Policy
-app.post('/api/containers/:id/restart-policy', requireAuth, async (req, res) => {
-  const { restartPolicy } = req.body;
-  const validPolicies = ['always', 'unless-stopped', 'no', 'on-failure'];
-
-  if (!restartPolicy || !validPolicies.includes(restartPolicy)) {
-    return res.status(400).json({ success: false, error: 'Ogiltig restart policy angiven.' });
-  }
-
-  try {
-    const container = docker.getContainer(req.params.id);
-    await container.update({
-      RestartPolicy: {
-        Name: restartPolicy,
-        MaximumRetryCount: restartPolicy === 'on-failure' ? 5 : 0
-      }
-    });
-    res.json({ success: true, message: `Restart policy ändrades till '${restartPolicy}'.` });
-  } catch (err) {
-    console.error('Update restart policy error:', err);
-    res.status(500).json({ success: false, error: 'Kunde inte uppdatera restart policy: ' + err.message });
-  }
-});
-
-// Inspect Container
-app.get('/api/containers/:id', requireAuth, async (req, res) => {
-  try {
-    const container = docker.getContainer(req.params.id);
-    const data = await container.inspect();
-    res.json({ success: true, data });
-  } catch (err) {
-    res.status(500).json({ success: false, error: 'Kunde inte inspektera container: ' + err.message });
-  }
-});
-
-// Start Container
-app.post('/api/containers/:id/start', requireAuth, async (req, res) => {
-  try {
-    const container = docker.getContainer(req.params.id);
-    await container.start();
-    res.json({ success: true, message: 'Container startades.' });
-  } catch (err) {
-    res.status(500).json({ success: false, error: 'Kunde inte starta container: ' + err.message });
-  }
-});
-
-// Stop Container
-app.post('/api/containers/:id/stop', requireAuth, async (req, res) => {
-  try {
-    const container = docker.getContainer(req.params.id);
-    await container.stop({ t: 10 }); // 10s graceful timeout
-    res.json({ success: true, message: 'Container stoppades.' });
-  } catch (err) {
-    res.status(500).json({ success: false, error: 'Kunde inte stoppa container: ' + err.message });
-  }
-});
-
-// Restart Container
-app.post('/api/containers/:id/restart', requireAuth, async (req, res) => {
-  try {
-    const container = docker.getContainer(req.params.id);
-    await container.restart({ t: 10 });
-    res.json({ success: true, message: 'Container omstartades.' });
-  } catch (err) {
-    res.status(500).json({ success: false, error: 'Kunde inte starta om container: ' + err.message });
-  }
-});
-
-// Rebuild / Recreate Container
-app.post('/api/containers/:id/rebuild', requireAuth, async (req, res) => {
-  const containerId = req.params.id;
-  try {
-    const container = docker.getContainer(containerId);
-    const inspectData = await container.inspect();
-
-    const imageName = inspectData.Config.Image;
-    const name = inspectData.Name.replace(/^\//, '');
-
-    // Attempt to pull latest image if image tag is present and not local build only
-    try {
-      if (imageName && !imageName.startsWith('sha256:')) {
-        console.log(`Pulling latest image for ${imageName}...`);
-        await new Promise((resolve, reject) => {
-          docker.pull(imageName, (err, stream) => {
-            if (err) return reject(err);
-            docker.modem.followProgress(stream, (err, output) => {
-              if (err) return reject(err);
-              resolve(output);
-            });
-          });
-        });
-      }
-    } catch (pullErr) {
-      console.warn(`Image pull warning (continuing with local image): ${pullErr.message}`);
-    }
-
-    // Stop container if running
-    if (inspectData.State.Running) {
-      console.log(`Stopping container ${name}...`);
-      await container.stop({ t: 10 }).catch(() => {});
-    }
-
-    // Prepare creation options from original inspect configuration
-    const createOptions = {
-      name: name,
-      Image: inspectData.Config.Image,
-      Env: inspectData.Config.Env,
-      Cmd: inspectData.Config.Cmd,
-      Entrypoint: inspectData.Config.Entrypoint,
-      WorkingDir: inspectData.Config.WorkingDir,
-      Labels: inspectData.Config.Labels,
-      ExposedPorts: inspectData.Config.ExposedPorts,
-      HostConfig: inspectData.HostConfig
-    };
-
-    // Remove existing container
-    console.log(`Removing container ${name}...`);
-    await container.remove({ v: false, force: true });
-
-    // Create new container
-    console.log(`Creating new container ${name}...`);
-    const newContainer = await docker.createContainer(createOptions);
-
-    // Start new container
-    console.log(`Starting container ${name}...`);
-    await newContainer.start();
-
-    res.json({
-      success: true,
-      message: `Container ${name} har byggts om och startats på nytt.`,
-      newId: newContainer.id
-    });
-  } catch (err) {
-    console.error('Rebuild container error:', err);
-    res.status(500).json({ success: false, error: 'Kunde inte bygga om container: ' + err.message });
-  }
-});
-
-// Delete Container
-app.delete('/api/containers/:id', requireAuth, async (req, res) => {
-  const force = req.query.force === 'true';
-  const removeVolumes = req.query.v === 'true';
-
-  try {
-    const container = docker.getContainer(req.params.id);
-    await container.remove({ force, v: removeVolumes });
-    res.json({ success: true, message: 'Container har tagits bort.' });
-  } catch (err) {
-    res.status(500).json({ success: false, error: 'Kunde inte ta bort container: ' + err.message });
-  }
-});
-
-// Logs Endpoint (HTTP JSON backupt/tail)
-app.get('/api/containers/:id/logs', requireAuth, async (req, res) => {
-  const tail = parseInt(req.query.tail) || 200;
-  try {
-    const container = docker.getContainer(req.params.id);
-    const logsBuffer = await container.logs({
-      stdout: true,
-      stderr: true,
-      tail: tail,
-      timestamps: true
-    });
-
-    // Clean docker stream headers (docker raw stream appends 8-byte header per frame)
-    let cleanedLogs = '';
-    if (Buffer.isBuffer(logsBuffer)) {
-      let offset = 0;
-      while (offset < logsBuffer.length) {
-        if (offset + 8 > logsBuffer.length) {
-          cleanedLogs += logsBuffer.toString('utf8', offset);
-          break;
-        }
-        const payloadSize = logsBuffer.readUInt32BE(offset + 4);
-        const chunk = logsBuffer.toString('utf8', offset + 8, offset + 8 + payloadSize);
-        cleanedLogs += chunk;
-        offset += 8 + payloadSize;
-      }
-    } else {
-      cleanedLogs = logsBuffer.toString();
-    }
-
-    res.json({ success: true, logs: cleanedLogs });
-  } catch (err) {
-    res.status(500).json({ success: false, error: 'Kunde inte hämta loggar: ' + err.message });
-  }
-});
-
-// System Prune Endpoint
+// Legacy: prune on the local server.
 app.post('/api/system/prune', requireAuth, async (req, res) => {
   try {
-    const prunedContainers = await docker.pruneContainers();
-    const prunedImages = await docker.pruneImages();
-    res.json({
-      success: true,
-      message: 'Systemet har rensats från oanvända resurser.',
-      containersDeleted: prunedContainers.ContainersDeleted || [],
-      spaceReclaimed: (prunedContainers.SpaceReclaimed || 0) + (prunedImages.SpaceReclaimed || 0)
-    });
+    const data = await hub.getTransport('local').call('system.prune', {});
+    hub.getTransport('local').requestSnapshotNow();
+    res.json({ success: true, message: 'Systemet har rensats från oanvända resurser.', ...data });
   } catch (err) {
-    res.status(500).json({ success: false, error: 'Prune misslyckades: ' + err.message });
+    res.status(err.httpStatus || 500).json({
+      success: false,
+      error: 'Prune misslyckades: ' + (err.userMessage || err.message)
+    });
   }
 });
 
-// ======================= WEBSOCKET FOR LOG STREAMING =======================
+// ======================= WEBSOCKETS =======================
 
-wss.on('connection', (ws, req) => {
-  const urlParams = new URLSearchParams(req.url.replace('/ws/logs?', ''));
-  const containerId = urlParams.get('containerId');
-  const token = urlParams.get('token');
+// Browser-facing log streaming, now able to proxy to any server's transport.
+const logsWss = new WebSocketServer({ noServer: true });
+logsWss.on('connection', createLogsHandler({ hub, jwtSecret: JWT_SECRET }));
 
-  // Verify Auth
-  try {
-    if (!token) throw new Error('Ingen token angiven.');
-    jwt.verify(token, JWT_SECRET);
-  } catch (err) {
-    ws.send(JSON.stringify({ type: 'error', message: 'Obehörig WebSocket-anslutning.' }));
-    ws.close();
-    return;
+// Agent-facing endpoint (its own maxPayload and handshake rules).
+hub.attach(server, '/ws/agent');
+
+server.on('upgrade', (req, socket, head) => {
+  const pathname = new URL(req.url, 'http://localhost').pathname;
+  if (pathname === '/ws/logs') {
+    logsWss.handleUpgrade(req, socket, head, ws => logsWss.emit('connection', ws, req));
+  } else if (pathname === '/ws/agent') {
+    hub.handleUpgrade(req, socket, head);
+  } else {
+    socket.destroy();
   }
-
-  if (!containerId) {
-    ws.send(JSON.stringify({ type: 'error', message: 'Saknar containerId.' }));
-    ws.close();
-    return;
-  }
-
-  const container = docker.getContainer(containerId);
-  let logStream = null;
-
-  container.logs({
-    follow: true,
-    stdout: true,
-    stderr: true,
-    tail: 150,
-    timestamps: true
-  }, (err, stream) => {
-    if (err) {
-      ws.send(JSON.stringify({ type: 'error', message: 'Kunde inte ansluta till loggström: ' + err.message }));
-      ws.close();
-      return;
-    }
-
-    logStream = stream;
-
-    stream.on('data', (chunk) => {
-      // Clean header frames
-      let text = '';
-      if (chunk.length >= 8) {
-        text = chunk.slice(8).toString('utf8');
-      } else {
-        text = chunk.toString('utf8');
-      }
-      if (ws.readyState === ws.OPEN) {
-        ws.send(JSON.stringify({ type: 'log', data: text }));
-      }
-    });
-
-    stream.on('end', () => {
-      if (ws.readyState === ws.OPEN) {
-        ws.send(JSON.stringify({ type: 'end', message: 'Loggström avslutades.' }));
-      }
-    });
-  });
-
-  ws.on('close', () => {
-    if (logStream && typeof logStream.destroy === 'function') {
-      logStream.destroy();
-    }
-  });
 });
 
 // Catch-all route to send index.html
@@ -840,5 +195,6 @@ server.listen(PORT, '0.0.0.0', () => {
   console.log(`====================================================`);
   console.log(` Docker Harbor Server is running on port ${PORT}`);
   console.log(` URL: http://0.0.0.0:${PORT}`);
+  console.log(` Servrar i registret: ${registry.list().map(s => s.id).join(', ')}`);
   console.log(`====================================================`);
 });

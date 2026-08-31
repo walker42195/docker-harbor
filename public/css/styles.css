@@ -1005,3 +1005,237 @@ body {
   color: var(--primary);
 }
 
+
+/* ============================================================
+   MULTI-SERVER: flikar, serverfält och installationsmodal
+   ============================================================ */
+
+.server-tabs-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 20px;
+}
+
+.server-tabs {
+  display: flex;
+  align-items: stretch;
+  gap: 8px;
+  flex: 1;
+  overflow-x: auto;
+  padding-bottom: 2px;
+}
+
+.server-tabs::-webkit-scrollbar { height: 4px; }
+.server-tabs::-webkit-scrollbar-thumb {
+  background: var(--border-color);
+  border-radius: 2px;
+}
+
+.server-tab {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 10px 16px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-color);
+  border-left: 3px solid var(--server-color, var(--primary));
+  background: var(--bg-glass);
+  color: var(--text-muted);
+  font-family: var(--font-family);
+  font-size: 13px;
+  font-weight: 600;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: var(--transition-fast);
+}
+
+.server-tab:hover {
+  background: var(--bg-card-hover);
+  color: var(--text-main);
+}
+
+.server-tab.active {
+  background: var(--bg-card);
+  color: var(--text-main);
+  border-color: var(--server-color, var(--primary));
+  border-left-width: 3px;
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.35);
+}
+
+.server-tab.offline {
+  opacity: 0.6;
+}
+
+.server-tab-count {
+  padding: 1px 7px;
+  border-radius: 20px;
+  background: rgba(255, 255, 255, 0.07);
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.server-tab.active .server-tab-count {
+  background: rgba(255, 255, 255, 0.12);
+  color: var(--text-main);
+}
+
+.server-tab-lock {
+  font-size: 12px;
+  line-height: 1;
+}
+
+/* Statusprick: grön ansluten, gul föråldrad data, röd frånkopplad, grå av */
+.server-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  background: var(--text-dim);
+}
+
+.server-dot.online {
+  background: var(--success);
+  box-shadow: 0 0 8px var(--success-glow);
+}
+
+.server-dot.connecting {
+  background: var(--accent-cyan);
+}
+
+.server-dot.stale {
+  background: var(--warning);
+  box-shadow: 0 0 8px rgba(245, 158, 11, 0.35);
+}
+
+.server-dot.offline {
+  background: var(--danger);
+  box-shadow: 0 0 8px var(--danger-glow);
+}
+
+.server-dot.disabled {
+  background: var(--text-dim);
+}
+
+/* Fältet med den aktiva serverns namn, status och åtgärder */
+.server-action-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 18px;
+  margin-bottom: 20px;
+  border-radius: var(--radius-md);
+}
+
+.server-action-info {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--text-main);
+}
+
+.server-action-meta {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-muted);
+}
+
+.server-action-buttons {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* Frånkopplad server: senast kända containers visas dimmade */
+.container-grid.server-offline {
+  opacity: 0.55;
+  pointer-events: none;
+}
+
+.stat-card.hidden-stat {
+  display: none;
+}
+
+/* Installationskommandot i "Lägg till server"-modalen */
+.install-command-box {
+  padding: 14px 16px;
+  margin-bottom: 12px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-color);
+  background: rgba(0, 0, 0, 0.35);
+  overflow-x: auto;
+}
+
+.install-command-box code {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 12.5px;
+  color: var(--accent-cyan);
+  white-space: nowrap;
+}
+
+.modal-hint {
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--text-muted);
+  margin-bottom: 16px;
+}
+
+.modal-hint code {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 12px;
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: rgba(0, 0, 0, 0.35);
+  color: var(--accent-cyan);
+}
+
+.form-help {
+  display: block;
+  margin-top: 5px;
+  font-size: 11.5px;
+  color: var(--text-dim);
+}
+
+.color-input {
+  height: 40px;
+  padding: 4px;
+  cursor: pointer;
+}
+
+.modal-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 16px 24px;
+  border-top: 1px solid var(--border-color);
+}
+
+/* Skrivskyddsmarkering på containerkort */
+.readonly-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border-radius: 20px;
+  background: rgba(245, 158, 11, 0.12);
+  border: 1px solid rgba(245, 158, 11, 0.3);
+  color: var(--warning);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+@media (max-width: 720px) {
+  .server-tabs-row {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .server-action-bar {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+}

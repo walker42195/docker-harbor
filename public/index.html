@@ -84,13 +84,6 @@
             <span id="dockerVersion">Docker Engine --</span>
           </div>
 
-          <button id="pruneBtn" class="btn btn-secondary btn-sm" title="Rensa oanvända containers & bilder">
-            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
-              <path stroke-linecap="round" stroke-linejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-            </svg>
-            Rensa System
-          </button>
-
           <button id="refreshBtn" class="btn btn-secondary btn-sm" title="Uppdatera lista">
             <svg id="refreshSpinner" xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
               <path stroke-linecap="round" stroke-linejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
@@ -106,6 +99,19 @@
 
       <!-- DASHBOARD CONTAINER -->
       <main class="dashboard-container">
+        <!-- SERVER TABS -->
+        <div class="server-tabs-row">
+          <div id="serverTabs" class="server-tabs">
+            <!-- Dynamiska serverflikar renderas här -->
+          </div>
+          <button id="addServerBtn" class="btn btn-secondary btn-sm" title="Lägg till en Docker-server">
+            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M12 4v16m8-8H4" />
+            </svg>
+            Lägg till server
+          </button>
+        </div>
+
         <!-- STATS GRID -->
         <div class="stats-grid">
           <div class="stat-card glass-panel" title="Host CPU-användning">
@@ -188,6 +194,27 @@
           </div>
         </div>
 
+        <!-- ACTIVE SERVER BAR -->
+        <div id="serverActionBar" class="server-action-bar glass-panel" style="display: none;">
+          <div class="server-action-info">
+            <span id="serverActionDot" class="server-dot"></span>
+            <span id="serverActionName">--</span>
+            <span id="serverActionMeta" class="server-action-meta"></span>
+          </div>
+          <div class="server-action-buttons">
+            <button id="unlockBtn" class="btn btn-secondary btn-sm" style="display: none;"></button>
+            <button id="pruneBtn" class="btn btn-secondary btn-sm" title="Rensa oanvända containers & bilder på denna server">
+              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+              </svg>
+              Rensa System
+            </button>
+            <button id="removeServerBtn" class="btn btn-outline-danger btn-sm" style="display: none;" title="Ta bort denna server från Docker Harbor">
+              Ta bort server
+            </button>
+          </div>
+        </div>
+
         <!-- CONTAINER LIST GRID -->
         <div id="containerList" class="container-grid">
           <!-- Dynamic container cards will be rendered here -->
@@ -202,6 +229,111 @@
           <p>Det finns inga containers som matchar din sökning eller ditt filter.</p>
         </div>
       </main>
+    </div>
+
+    <!-- UNLOCK MODAL -->
+    <div id="unlockModal" class="modal-overlay">
+      <div class="modal-container" style="max-width: 440px;">
+        <div class="modal-header">
+          <h2>
+            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
+            </svg>
+            Lås upp <span id="unlockServerName" style="color: var(--accent-cyan);">--</span>
+          </h2>
+          <button class="modal-close" onclick="closeUnlockModal()">
+            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" />
+            </svg>
+          </button>
+        </div>
+        <form id="unlockForm">
+          <div class="modal-body">
+            <p class="modal-hint">
+              Servern är skrivskyddad. Ange upplåsningslösenordet för att kunna starta,
+              stoppa, bygga om och ta bort containers. Upplåsningen gäller i 15 minuter.
+            </p>
+            <div class="form-group">
+              <label for="unlockPassword">Upplåsningslösenord</label>
+              <input type="password" id="unlockPassword" class="form-control" placeholder="••••••••" autocomplete="off" required>
+            </div>
+          </div>
+          <div class="modal-footer">
+            <button type="button" class="btn btn-secondary btn-sm" onclick="closeUnlockModal()">Avbryt</button>
+            <button type="submit" id="unlockSubmitBtn" class="btn btn-primary btn-sm">Lås upp</button>
+          </div>
+        </form>
+      </div>
+    </div>
+
+    <!-- ADD SERVER MODAL -->
+    <div id="addServerModal" class="modal-overlay">
+      <div class="modal-container" style="max-width: 620px;">
+        <div class="modal-header">
+          <h2>
+            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M5 12h14m-7-7v14" />
+            </svg>
+            Lägg till Docker-server
+          </h2>
+          <button class="modal-close" onclick="closeAddServerModal()">
+            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" />
+            </svg>
+          </button>
+        </div>
+
+        <form id="addServerForm">
+          <div class="modal-body" id="addServerStep1">
+            <p class="modal-hint">
+              Registrera servern här. Du får sedan ett kommando att köra på den servern,
+              som installerar en agent. Agenten ansluter utåt till Docker Harbor — ingen
+              port behöver öppnas på fjärrservern.
+            </p>
+            <div class="form-group">
+              <label for="newServerId">Server-ID</label>
+              <input type="text" id="newServerId" class="form-control" placeholder="t.ex. nova2" required>
+              <small class="form-help">2–32 tecken: a–z, 0–9, bindestreck eller understreck.</small>
+            </div>
+            <div class="form-group">
+              <label for="newServerName">Visningsnamn</label>
+              <input type="text" id="newServerName" class="form-control" placeholder="t.ex. Nova 2 (GPU)">
+            </div>
+            <div class="form-group">
+              <label for="newServerHost">Publik adress (valfritt)</label>
+              <input type="text" id="newServerHost" class="form-control" placeholder="t.ex. 192.168.1.42">
+              <small class="form-help">Används för att göra portlänkarna på containerkorten klickbara.</small>
+            </div>
+            <div class="form-group">
+              <label for="newServerColor">Färg</label>
+              <input type="color" id="newServerColor" class="form-control color-input" value="#c084fc">
+            </div>
+          </div>
+
+          <div class="modal-body" id="addServerStep2" style="display: none;">
+            <p class="modal-hint">
+              Kör detta kommando på servern <strong id="installTargetName">--</strong>.
+              Koden gäller i 30 minuter och kan bara användas en gång.
+            </p>
+            <div class="install-command-box">
+              <code id="installCommand">--</code>
+            </div>
+            <button type="button" class="btn btn-secondary btn-sm" onclick="copyInstallCommand()">
+              Kopiera kommando
+            </button>
+            <p class="modal-hint" style="margin-top: 16px;">
+              Agenten installeras <strong>skrivskyddad</strong>. För att tillåta start, stopp
+              och ombyggnad: sätt <code>HARBOR_READ_ONLY=false</code> i
+              <code>/opt/harbor-agent/.env</code> på servern och kör <code>docker compose up -d</code>.
+            </p>
+          </div>
+
+          <div class="modal-footer">
+            <button type="button" class="btn btn-secondary btn-sm" onclick="closeAddServerModal()">Stäng</button>
+            <button type="submit" id="addServerSubmitBtn" class="btn btn-primary btn-sm">Skapa installationskommando</button>
+          </div>
+        </form>
+      </div>
     </div>
 
     <!-- LOG MODAL -->

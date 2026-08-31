@@ -1,0 +1,39 @@
+# Docker Harbor-agent.
+# Normalt behöver du inte skriva den här filen själv -- lägg till servern i
+# Docker Harbor-gränssnittet och kör kommandot du får där, så skapas den åt dig.
+services:
+  harbor-agent:
+    image: docker-harbor-agent:latest
+    container_name: harbor-agent
+    restart: unless-stopped
+
+    # Inga ports: agenten lyssnar aldrig -- all kommunikation är utgående.
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      # Persistent token. Utan denna måste agenten enrollas om vid varje omstart.
+      - harbor-agent-data:/data
+      # Behövs bara om du vill kunna läsa/redigera compose- och Dockerfiler.
+      # Sökvägen måste vara IDENTISK på båda sidor, eftersom compose-sökvägarna
+      # i Dockers labels är värd-absoluta.
+      # - /home/fredrik/Projects:/home/fredrik/Projects
+      # Bara på värdar med NVIDIA-GPU:
+      # - /usr/bin/nvidia-smi:/usr/bin/nvidia-smi:ro
+
+    environment:
+      - HARBOR_HUB_URL=wss://harbor.example.com/ws/agent
+      - HARBOR_SERVER_ID=nova2
+      # Vid första start: engångskoden från Docker Harbor. Agenten byter den mot
+      # en permanent token som sparas i /data.
+      - HARBOR_ENROLL_CODE=${HARBOR_ENROLL_CODE}
+      - HARBOR_SNAPSHOT_INTERVAL_MS=5000
+      # Skrivskyddat som standard. true = agenten vägrar start/stopp/rebuild/
+      # radering oavsett vad hubben ber om.
+      - HARBOR_READ_ONLY=true
+      - HARBOR_ALLOW_FILE_READ=true
+      - HARBOR_ALLOW_FILE_WRITE=false
+
+    labels:
+      description: "Harbor-agent som rapporterar containers till centrala Docker Harbor."
+
+volumes:
+  harbor-agent-data:

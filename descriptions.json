@@ -1,11 +1,18 @@
 {
-  "haddock-telegram_bot-1": "Clawollama kopplat till en Telegramgrupp med inställningen att llm ska svara som Kapten Haddock.",
-  "docker-harbor": "Huvudsaklig kontrollpanel för Docker-containers på servern (Live redigerad).",
-  "kde-harbor": "kde ubuntu desktop för att kunna titta på webbsidor, köra program och titta på dem och kompilera kod. Installera program och leka.",
-  "clawollama": "ollama",
-  "fyui": "Comfyui med Flux 1 dev för stillbilder och MiniMax H3 för att skapa filmer",
-  "master-harbor": "Master Harbor  cli och webbchat för att ge uppdrag till lokala AI-assistenter  samt kopplingar till  ComfyUI och SearXNG.",
-  "captain-harbor": "Kapten Harbor agentisk skrivbordsmiljö med VNC och X11-skärmgränssnitt.",
-  "garmin-sdk": "Garmin Connect IQ SDK-utvecklingsmiljö för Fenix 5X Plus och klockappar.",
-  "novabase-dev": "Lokal PHP 8.2 & Apache webbserver för Novabase.se utveckling."
+  "version": 2,
+  "servers": {
+    "local": {
+      "haddock-telegram_bot-1": "Clawollama kopplat till en Telegramgrupp med inställningen att llm ska svara som Kapten Haddock.",
+      "docker-harbor": "Huvudsaklig kontrollpanel för Docker-containers på servern (Live redigerad).",
+      "kde-harbor": "kde ubuntu desktop för att kunna titta på webbsidor, köra program och titta på dem och kompilera kod. Installera program och leka.",
+      "clawollama": "ollama",
+      "fyui": "Comfyui med Flux 1 dev för stillbilder och MiniMax H3 för att skapa filmer",
+      "master-harbor": "Master Harbor  cli och webbchat för att ge uppdrag till lokala AI-assistenter  samt kopplingar till  ComfyUI och SearXNG.",
+      "captain-harbor": "Kapten Harbor agentisk skrivbordsmiljö med VNC och X11-skärmgränssnitt.",
+      "garmin-sdk": "Garmin Connect IQ SDK-utvecklingsmiljö för Fenix 5X Plus och klockappar.",
+      "novabase-dev": "Lokal PHP 8.2 & Apache webbserver för Novabase.se utveckling.",
+      "marketing-bridge": "Brygga mellan n8n, agy, comfyui för att ta fram och publicera reklam på instagram för mina projekt",
+      "reddit-bridge": "Brygga mellan n8n, agy,för att ta fram och publicera reklam på Reddit för mina projekt. Agy ska leta upp frågor som handlar om liknande saker som min projekt och sedan svara på frågan och i förbifarten nämna mitt projekt"
+    }
+  }
 }
