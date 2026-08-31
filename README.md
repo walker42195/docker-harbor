@@ -499,7 +499,10 @@ cd /opt/harbor-agent && docker compose logs -f harbor-agent
 | Loggrad | Betydelse |
 |---|---|
 | `ansluten till hubben` | Allt fungerar. |
-| `hubben nekade åtkomst (4403 ...)` | Fel server-ID eller token. Skapa en ny installationskod. |
+| `hubben nekade åtkomst (4403 ...)` | Fel server-ID, eller servern finns inte i hubben. Kontrollera hubbens logg — den skriver ut orsaken för varje avvisad agent. |
+| `hubben nekade det sparade token` | Servern registrerades om i hubben. Agenten kastar sitt gamla token och enrollar om automatiskt med koden i `.env`. |
+| `Unexpected server response: 429` | Hubben har blockerat serverns IP i 10 minuter efter fem misslyckade försök. Vänta, eller starta om hubben för att nollställa. Åtgärda orsaken först — se hubbens logg. |
+| `socket hang up` / `frånkopplad (1006)` | Ingen WebSocket-handskakning kom till stånd. Med en hubb äldre än denna version är det oftast IP-blockeringen, som då revs tyst; uppdatera hubben så svarar den 429 med förklaring i loggen. |
 | `frånkopplad (...), återansluter om ...` | Normalt vid nätverksavbrott. Agenten backar av upp till 30 sekunder. |
 | `KUNDE INTE spara token` | `/data`-volymen saknas eller är skrivskyddad. |
 | `cannot create .env: Permission denied` | Kör installationskommandot med `sudo`. |

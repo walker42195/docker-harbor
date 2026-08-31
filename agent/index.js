@@ -40,6 +40,10 @@ let ws = null;
 let snapTimer = null;
 let hbTimer = null;
 let lastPong = 0;
+// Satts nar hubben nekat vart sparade token. Da maste vi falla tillbaka pa
+// enrollment-koden -- annars sitter agenten fast for alltid med ett token som
+// hubben inte langre kanner igen (t.ex. efter att servern registrerats om).
+let forceEnroll = false;
 let backoff = 1000;
 let seq = 0;
 const streams = new Map(); // reqId -> stream handle
@@ -80,7 +84,7 @@ function send(frame) {
 }
 
 function connect() {
-  const token = CFG.token || loadStoredToken();
+  const token = forceEnroll ? null : (CFG.token || loadStoredToken());
   if (!token && !CFG.enrollCode) {
     console.error('[agent] varken token eller enrollment-kod tillgänglig. Avbryter.');
     process.exit(1);
@@ -120,6 +124,7 @@ function connect() {
     if (msg.t === FRAME.WELCOME) {
       backoff = 1000;
       if (msg.token) storeToken(msg.token);
+      forceEnroll = false;
       console.log(`[agent] ansluten till hubben (hub ${msg.hubVersion}), rapporterar var ${msg.snapshotIntervalMs || CFG.snapshotMs} ms`);
       startSnapshotLoop(msg.snapshotIntervalMs || CFG.snapshotMs);
       startHeartbeat();
@@ -158,7 +163,15 @@ function connect() {
     teardown();
     const text = reason ? reason.toString() : '';
     if (code === 4403) {
-      console.error(`[agent] hubben nekade åtkomst (${code} ${text}). Kontrollera server-ID och token.`);
+      if (!forceEnroll && CFG.enrollCode && token) {
+        // Sparad token underkand men vi har en enrollment-kod: kasta token och
+        // enrolla om vid nasta forsok.
+        console.warn('[agent] hubben nekade det sparade token. Provar enrollment-koden igen.');
+        forceEnroll = true;
+        try { fs.unlinkSync(CFG.tokenFile); } catch (err) {}
+      } else {
+        console.error(`[agent] hubben nekade åtkomst (${code} ${text}). Kontrollera server-ID och att servern finns i hubben.`);
+      }
     }
     const wait = Math.min(backoff, 30000) + Math.floor(Math.random() * 1000);
     console.warn(`[agent] frånkopplad (${code}), återansluter om ${wait} ms`);
