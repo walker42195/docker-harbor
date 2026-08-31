@@ -63,7 +63,7 @@ Skriptet känner av värdens förutsättningar och anpassar installationen:
 |---|---|
 | **Docker och Compose** | Avbryter med tydligt fel om något saknas eller daemonen inte svarar. |
 | **NVIDIA-GPU** | Letar efter `nvidia-smi`, kontrollerar att `nvidia-container-toolkit` finns och **provkör faktiskt** en container med GPU. Först då slås GPU- och VRAM-mätning på. |
-| **Projektkataloger** | Läser compose-labels från de containers som redan finns på värden och härleder vilka kataloger som behöver monteras — ofta fler än en. Hittas inga containers faller den tillbaka på `~/Projects`, `~/projects`, `~/docker`, `~/Docker`. Styr själv med `HARBOR_PROJECTS_DIR=/en:/annan ./setup.sh`. |
+| **Projektkataloger** | Läser compose-labels från **hubbmaskinens egna** containers och monterar precis de kataloger som behövs — ofta fler än en. Kör hubben på en dedikerad server monteras ingenting, vilket är rätt: fjärrservrarnas filer läses av deras egna agenter. Styr själv med `HARBOR_PROJECTS_DIR=/en:/annan ./setup.sh`. |
 | **Hemligheter** | Skapar `.env` med slumpade `JWT_SECRET`, `ADMIN_PASSWORD` och `WRITE_UNLOCK_PASSWORD` (`chmod 600`). Det genererade inloggningslösenordet skrivs ut en gång. |
 | **Data** | Skapar `data/` för lokal körning. I Docker används den namngivna volymen `harbor-data`. |
 
@@ -128,69 +128,73 @@ läsa GPU-siffror genom den, som reserv.
 
 ## Varför samma sökväg på båda sidor?
 
-Det här gäller **bara** funktionen som visar `docker-compose.yml` och
-`Dockerfile` i gränssnittet. Struntar du i den kan du hoppa över hela avsnittet
-— allt annat fungerar ändå.
+Det här gäller **bara** knappen som visar `docker-compose.yml` och `Dockerfile`
+i gränssnittet. Struntar du i den kan du hoppa över hela avsnittet.
 
-När du startar något med Docker Compose sparar Docker sökvägen till compose-filen
-som en label på containern:
+### Docker talar om var filen ligger — men lämnar inte ut den
+
+Docker-motorn sparar sökvägen till compose-filen som en label:
 
 ```bash
 $ docker inspect n8n --format '{{index .Config.Labels "com.docker.compose.project.config_files"}}'
 /home/fredrik/Docker/n8n/docker-compose.yml
 ```
 
-Den sökvägen är **värdens** sökväg. Docker Harbor kör själv i en container, och
-där finns inte `/home/fredrik/Docker/n8n/` om vi inte monterar in den.
+Så långt stämmer din tanke. Men Docker ger bara **sökvägen**, inte innehållet.
+Det finns inget API för att läsa en godtycklig fil från värdens filsystem —
+Docker hanterar containers, inte filer. För att visa filen måste den som läser
+den nå den katalogen på riktigt.
 
-Säg att vi monterar den på en annan plats:
+### Därför samma sökväg
 
-```yaml
-- /home/fredrik/Projects:/mnt/projekt        # ← annan sökväg inuti
-```
-
-Då händer det här:
-
-```
-Label säger:        /home/fredrik/Projects/minapp/docker-compose.yml
-Containern har:     /mnt/projekt/minapp/docker-compose.yml
-Harbor öppnar:      /home/fredrik/Projects/minapp/docker-compose.yml  →  finns inte
-```
-
-Filen *finns* i containern, men på en annan adress än den Docker uppgav. Harbor
-skulle behöva räkna om varje sökväg, och kan inte veta hur.
-
-Monterar vi den i stället på samma sökväg:
-
-```yaml
-- /home/fredrik/Projects:/home/fredrik/Projects   # ← identisk
-```
+Den som läser filen kör själv i en container. Monteras katalogen någon
+annanstans stämmer inte sökvägen i labeln längre:
 
 ```
-Label säger:        /home/fredrik/Projects/minapp/docker-compose.yml
-Containern har:     /home/fredrik/Projects/minapp/docker-compose.yml
-Harbor öppnar:      /home/fredrik/Projects/minapp/docker-compose.yml  →  träff
+Labeln säger:   /home/fredrik/Docker/n8n/docker-compose.yml
+Containern har: /mnt/projekt/n8n/docker-compose.yml
+Öppnar:         /home/fredrik/Docker/n8n/docker-compose.yml  →  finns inte
 ```
 
-Sökvägarna blir identiska och allt stämmer utan omräkning. Därför ser raden
-konstig ut med samma sökväg två gånger — det är hela poängen.
+Filen finns, men på en annan adress än den Docker uppgav. Monteras den på
+samma sökväg stämmer allt utan omräkning:
 
-`setup.sh` sätter detta åt dig. Den gissar inte: den läser compose-labels från
-de containers som redan finns på värden och monterar precis de rötter som
-behövs. Har du filer i både `~/Projects` och `~/Docker` monteras båda.
+```
+- /home/fredrik/Docker:/home/fredrik/Docker      # identisk på båda sidor
+```
 
-Vill du styra det själv (flera kataloger separeras med kolon):
+Därför ser raden konstig ut med samma sökväg två gånger. Det är hela poängen.
+
+### Varje maskin sköter sina egna filer
+
+Det viktiga: monteringen görs på **den maskin där containrarna faktiskt kör** —
+inte på hubben.
+
+| Maskin | Vad som monteras |
+|---|---|
+| **Hubben** | Bara katalogerna för hubbmaskinens *egna* containers. Kör hubben på en dedikerad server utan andra containers monteras **ingenting**. |
+| **Varje fjärrserver** | Agenten monterar den serverns egna kataloger. Filen läses lokalt där och skickas över WebSocket till hubben. |
+
+Hubben läser alltså aldrig en fjärrservers filsystem — den frågar agenten, som
+läser lokalt. Det är också därför hubben aldrig behöver veta något om
+fjärrserverns kataloger.
+
+### Du behöver inte konfigurera det
+
+Både `setup.sh` och agentens installationsskript gissar inte: de läser
+compose-labels från de containers som redan finns på den maskin de körs på och
+monterar precis de rötter som behövs. Har du filer i både `~/Projects` och
+`~/Docker` monteras båda. Finns inga compose-startade containers monteras inget.
+
+Vill du styra det själv på hubben (flera kataloger separeras med kolon):
 
 ```bash
 HARBOR_PROJECTS_DIR=/srv/docker:/opt/stacks ./setup.sh
 ```
 
-Lägger du senare till containers i en helt ny katalog: kör om `setup.sh` och
-`docker compose up -d`.
-
-Samma sak gäller agenten på en fjärrserver: ska du kunna läsa compose-filer
-därifrån monteras den serverns katalog på sin egen sökväg, i den serverns
-`docker-compose.yml`.
+Startar du senare containers i en helt ny katalog: kör om `setup.sh` och
+`docker compose up -d`. På en fjärrserver: kör om installationskommandot, eller
+lägg till raden i `/opt/harbor-agent/docker-compose.yml` för hand.
 
 **Containers som inte startats via Compose** har ingen sådan label alls. För dem
 visas "Fristående container" och Compose-knappen är avstängd — det är väntat.
@@ -378,7 +382,7 @@ cd /opt/harbor-agent && docker compose up -d
 |---|---|---|
 | `/var/run/docker.sock:/var/run/docker.sock` | Ja | Åtkomst till Docker. |
 | `harbor-agent-data:/data` | Ja | Sparar den permanenta token. Utan den måste agenten enrollas om vid varje omstart. |
-| `<projektkatalog>:<samma sökväg>` | Nej | Krävs för att läsa och redigera compose-filer. Identisk sökväg på båda sidor — [varför?](#varför-samma-sökväg-på-båda-sidor) |
+| `<projektkatalog>:<samma sökväg>` | Nej | Läggs till automatiskt av installationsskriptet, härlett ur den serverns egna compose-labels. Krävs för att läsa compose-filer och Dockerfiler därifrån — [varför samma sökväg?](#varför-samma-sökväg-på-båda-sidor) |
 | GPU-konfiguration | Nej | Läggs till automatiskt av installationsskriptet när det hittar en GPU **och** verifierat att den kan skickas in i en container. Ingen manuell mount — se [Om NVIDIA-GPU](#om-nvidia-gpu). |
 
 Se `agent/README.md` och `agent/docker-compose.example.yml` för mer.

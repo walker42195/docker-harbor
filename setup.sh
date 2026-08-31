@@ -89,9 +89,9 @@ fi
 # ------------------------------------------------------ 3. Projektkataloger
 say ""
 say "Projektkataloger"
-info "Behövs bara för att kunna läsa compose-filer och Dockerfiler från"
-info "gränssnittet. Monteras på samma sökväg i containern som på värden,"
-info "eftersom Docker anger sökvägarna värd-absolut. Se README."
+info "Gäller bara DEN HÄR värdens egna containers. Fjärrservrar sköts av"
+info "sin egen agent, som monterar sina egna kataloger. Monteras på samma"
+info "sökväg som på värden, eftersom Docker anger sökvägarna värd-absolut."
 
 # Härled katalogerna ur containrarnas faktiska compose-labels i stället för
 # att gissa. Det ger exakt de rötter som verkligen behövs på just den här
@@ -142,19 +142,11 @@ else
     fi
   done
 
-  if [ -z "$PROJECT_ROOTS" ]; then
-    for candidate in "$HOME/Projects" "$HOME/projects" "$HOME/docker" "$HOME/Docker"; do
-      if [ -d "$candidate" ]; then
-        PROJECT_ROOTS="$PROJECT_ROOTS $candidate"
-        ok "hittade $candidate"
-      fi
-    done
-  fi
 fi
 
 if [ -z "$PROJECT_ROOTS" ]; then
-  info "ingen projektkatalog hittad -- compose-/Dockerfile-läsning avstängd"
-  info "sätt HARBOR_PROJECTS_DIR=/sökväg och kör om för att aktivera"
+  info "inga compose-startade containers på den här värden -- inget monteras"
+  info "(kör om setup.sh senare om du startar containers här)"
 fi
 
 # --------------------------------------------------------------- 4. Data
