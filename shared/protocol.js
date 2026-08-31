@@ -37,6 +37,7 @@ class OpError extends Error {
 
 const HTTP_STATUS_FOR = {
   UNKNOWN_OP: 400,
+  AGENT_OUTDATED: 501,
   BAD_ARGS: 400,
   FORBIDDEN: 403,
   LOCKED: 423,

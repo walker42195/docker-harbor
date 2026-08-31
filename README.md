@@ -394,25 +394,101 @@ Se `agent/README.md` och `agent/docker-compose.example.yml` för mer.
 
 ## Rensa system
 
-Knappen **Rensa System** i serverfältet visar först en förhandsvisning av vad
-som skulle tas bort på just den servern, med storlek per kategori:
+Docker samlar på sig gamla containers, image-lager och byggcache som aldrig
+städas automatiskt. Det kan bli många gigabyte. **Rensa System** tar bort det —
+per server, och först efter att du sett exakt vad som försvinner.
 
-| Kategori | Förvalt | Vad det är |
-|---|---|---|
-| Stoppade containers | ✅ | Alla containers som inte kör. Permanent. |
-| Otaggade image-lager | ✅ | `<none>`-lager som ingen image pekar på. Går alltid att bygga om. |
-| Alla oanvända images | ❌ | Även taggade images som ingen container använder. Måste hämtas eller byggas på nytt. |
-| Byggcache | ❌ | Mellanlager från tidigare byggen. Nästa ombyggnad blir långsammare. |
-| Oanvända nätverk | ❌ | Nätverk utan anslutna containers. Återskapas av compose. |
-| Oanvända volymer | ❌ | **Kan radera data som inte går att återskapa.** |
+### Gör så här
 
-Inget tas bort förrän du bekräftar, och totalsumman uppdateras medan du kryssar.
+1. **Välj server.** Klicka fliken för den server du vill rensa. Knappen rensar
+   bara den servern, aldrig alla på en gång.
+2. **Lås upp om det behövs.** Agent-servrar är skrivskyddade som standard.
+   Klicka 🔒 i serverfältet och ange `WRITE_UNLOCK_PASSWORD`. Är knappen
+   utgråad är det oftast det som saknas — se [Skrivskydd i två lager](#skrivskydd-i-två-lager).
+3. **Klicka Rensa System.** En dialog öppnas och hämtar en förhandsvisning från
+   servern. Ingenting har tagits bort ännu.
+4. **Kryssa i vad du vill rensa.** Varje rad visar antal och storlek, och
+   summan längst ner uppdateras medan du kryssar. Rader utan något att rensa är
+   utgråade.
+5. **Bekräfta.** Först nu tas något bort. Väljer du volymer får du en extra
+   fråga.
 
-**Om volymer.** En volym räknas som oanvänd så fort ingen *körande* container
-använder den — även om den tillhör en tjänst du bara stoppat tillfälligt. Där
-kan det ligga databaser, certifikat och uppladdningar. Därför är rutan aldrig
-förvald, den är rödmarkerad, och den kräver en extra bekräftelse. Kryssa i den
-bara när du vet exakt vilka volymer som listas.
+### Vad de olika valen gör
+
+| Kategori | Förvalt | Vad det är | Går att återskapa? |
+|---|---|---|---|
+| Stoppade containers | ✅ | Alla containers som inte kör | Nej — men de kör ju inte |
+| Otaggade image-lager | ✅ | `<none>`-lager som ingen image pekar på | Ja, byggs om |
+| Alla oanvända images | ❌ | Även taggade images ingen container använder | Ja, hämtas/byggs om |
+| Byggcache | ❌ | Mellanlager från tidigare byggen | Ja, men nästa bygge blir långsammare |
+| Oanvända nätverk | ❌ | Nätverk utan anslutna containers | Ja, compose återskapar dem |
+| Oanvända volymer | ❌ | Volymer ingen container använder | **Nej — data är borta** |
+
+### Vad ska jag välja?
+
+**Vanlig städning, låg risk.** Låt de två förvalda vara ikryssade och kör. Det
+motsvarar `docker container prune` + `docker image prune`.
+
+**Slut på disk.** Kryssa även i *Alla oanvända images* och *Byggcache*. Det är
+nästan alltid där utrymmet finns — på en byggserver kan byggcachen ensam vara
+tiotals gigabyte. Priset är att nästa ombyggnad tar längre tid och att images
+måste hämtas på nytt.
+
+**Efter att ha rivit en gammal stack.** Lägg till *Oanvända nätverk*. De är
+små, men skräpar ner i `docker network ls`.
+
+**Volymer.** Se nedan. Kryssa inte i den slentrianmässigt.
+
+### Varning för volymer
+
+En volym räknas som oanvänd så fort ingen **körande** container använder den —
+även om den tillhör en tjänst du bara stoppat tillfälligt, eller en stack du
+tänkt starta igen imorgon. Där kan det ligga databaser, certifikat,
+uppladdningar och annat som inte går att bygga om.
+
+På en av mina testmaskiner listade förhandsvisningen 68 "oanvända" volymer,
+inklusive en Caddy-datavolym med utfärdade certifikat. Inget av det hade jag
+velat radera.
+
+Därför är rutan aldrig förvald, den är rödmarkerad, och den kräver en extra
+bekräftelse. **Läs listan i dialogen innan du kryssar i den.** Känner du inte
+igen ett volymnamn — kryssa inte i.
+
+Vill du se vad en volym innehåller innan du bestämmer dig:
+
+```bash
+docker run --rm -v <volymnamn>:/v alpine ls -la /v
+```
+
+### Motsvarande kommandon
+
+Vill du hellre göra det från terminalen på servern:
+
+```bash
+docker system df                  # hur mycket går att återvinna
+docker container prune            # stoppade containers
+docker image prune                # otaggade lager
+docker image prune -a             # alla oanvända images
+docker builder prune              # byggcache
+docker network prune              # oanvända nätverk
+docker volume prune               # oanvända volymer  ← farlig
+```
+
+Dialogen kör exakt dessa operationer via Docker-API:t, i den ordningen, med
+volymer sist.
+
+### Om något går fel
+
+| Meddelande | Betyder |
+|---|---|
+| Knappen är utgråad | Servern är frånkopplad, låst, eller agenten är skrivskyddad |
+| `Servern är låst. Lås upp för att göra ändringar.` | Klicka 🔒 i serverfältet |
+| `Servern är i skrivskyddat läge.` | `HARBOR_READ_ONLY=true` på agenten |
+| `Kunde inte hämta rensningsförhandsvisning` | Servern tappade kontakten medan dialogen öppnades |
+| `kör en äldre agent ... som saknar den här funktionen` | Hubben är uppdaterad men agenten på den servern är inte det. Kör om installationskommandot där — se [Uppdatera agenterna](#uppdatera-agenterna). |
+
+Rensningen är inte atomär: går något fel halvvägs är det som redan tagits bort
+borta. Svaret visar vad som faktiskt hann rensas.
 
 ---
 
