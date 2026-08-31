@@ -162,12 +162,16 @@ function setupEventListeners() {
     const force = document.getElementById('chkForce').checked;
     const volumes = document.getElementById('chkVolumes').checked;
 
+    // Läs av innan modalen stängs -- closeDeleteModal() nollställer båda.
+    const serverId = pendingDeleteServerId;
+    const containerId = pendingDeleteId;
+
     closeDeleteModal();
     showToast('Tar bort container...', 'info');
 
     try {
       const res = await apiFetch(
-        `/api/servers/${pendingDeleteServerId}/containers/${pendingDeleteId}?force=${force}&v=${volumes}`,
+        `/api/servers/${serverId}/containers/${containerId}?force=${force}&v=${volumes}`,
         { method: 'DELETE' }
       );
       if (res.success) {
